@@ -1,0 +1,80 @@
+
+default:
+  image: python:3.11
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_SUBMODULE_DEPTH: 1
+
+stages:
+  - format
+  - lint
+  - test
+
+# -------------------------------------------------------------------
+# Format stage
+# -------------------------------------------------------------------
+format-python:
+  stage: format
+  script:
+    - pip install --upgrade pip
+    - pip install ruff --quiet
+    - ruff format src evaluation examples experiments --check
+
+
+# -------------------------------------------------------------------
+# Linting stage
+# -------------------------------------------------------------------
+sort-imports:
+  stage: lint
+  script:
+    - pip install isort --quiet
+    - isort src --check-only
+
+python-lint-ruff:
+  stage: lint
+  script:
+    - pip install ruff
+    - ruff check src evaluation examples experiments
+
+python-pylint:
+  stage: lint
+  script:
+    - pip install ".[dev,eval]" --quiet
+    - pylint --fail-under=9.8 src
+    - pylint --fail-under=9 experiments
+    - pylint --fail-under=9 examples
+
+python-codequality:
+  stage: lint
+  script:
+    - pip install --upgrade pip
+    - pip install ".[dev]" --quiet
+    - mypy src
+
+jupyter_clean:
+  stage: lint
+  script:
+    - pip install nb-clean --quiet
+    - nb-clean check evaluation/notebooks 
+
+shellcheck:
+  image: koalaman/shellcheck-alpine:latest
+  stage: lint
+  before_script:
+    - apk update
+    - apk add git
+  script:
+    - find ./scripts -type f -name '*.sh' | xargs shellcheck --severity=warning
+
+# -------------------------------------------------------------------
+# Testing stage
+# -------------------------------------------------------------------
+test:
+  stage: test
+  allow_failure: true
+  script:
+    - apt update -y && apt upgrade -y
+    - pip install --upgrade pip --quiet
+    - pip install ".[dev, eval]" --quiet
+    - pytest test

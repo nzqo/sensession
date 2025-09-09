@@ -1,0 +1,22 @@
+--- /usr/local/MATLAB/R2024b/toolbox/wlan/wlan/wlanHTConfig.m	2024-03-05 14:52:50.000000000 +0100
++++ /usr/local/MATLAB/R2024b/toolbox/wlan/wlan/wlanHTConfig.m	2024-10-11 14:57:58.928599384 +0200
+@@ -28,7 +28,8 @@
+ %   PSDULength           - Length of the PSDU in bytes
+ %   AggregatedMPDU       - Aggregation indication
+ %   RecommendSmoothing   - Recommend smoothing for channel estimation
+-
++%   ForceSounding        - Force Sounding Bit
++%
+ %   Copyright 2015-2024 The MathWorks, Inc.
+ 
+ %#codegen
+@@ -124,6 +125,10 @@
+     %   Set this property to true to indicate smoothing is recommended
+     %   for channel estimation. The default is true.
+     RecommendSmoothing (1,1) logical = true;      
++    %ForceSounding Enable sounding bit by force.
++    %   Set this property to force the frame to signalize sounding.
++    %   The default is false
++    ForceSounding (1,1) logical = false;
+ end
+

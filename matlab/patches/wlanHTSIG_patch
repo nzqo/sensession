@@ -1,0 +1,12 @@
+--- /usr/local/MATLAB/R2024b/toolbox/wlan/wlan/wlanHTSIG.m	2024-03-05 14:57:17.000000000 +0100
++++ /usr/local/MATLAB/R2024b/toolbox/wlan/wlan/wlanHTSIG.m 	2024-10-11 14:54:38.568603542 +0200
+@@ -57,6 +57,9 @@
+ % HT-SIG2 structure
+ b1 = double(cfgHT.RecommendSmoothing);
+ b2 = double(cfgHT.PSDULength~=0);    % Not Sounding
++if cfgHT.ForceSounding
++    b2 = 0;
++end
+ 
+ % Set Aggregation bit
+ b4 = double(cfgHT.AggregatedMPDU);

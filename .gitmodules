@@ -1,0 +1,9 @@
+[submodule "csi_tools/PicoScenes-Python-Toolbox"]
+	path = csi_tools/PicoScenes-Python-Toolbox
+	url = https://github.com/wifisensing/PicoScenes-Python-Toolbox.git
+[submodule "csi_tools/espion"]
+	path = csi_tools/espion
+	url = https://github.com/benjamin-kl/ESPion.git
+[submodule "csi_tools/sensei"]
+	path = csi_tools/sensei
+	url = https://github.com/nzqo/sensei.git
