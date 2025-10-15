@@ -24,6 +24,8 @@ dependencies = [
 [project.optional-dependencies]
 eval = [
 	"matplotlib",
+	"plotly",
+	"kaleido",
 	"notebook",
 	"seaborn",
 ]

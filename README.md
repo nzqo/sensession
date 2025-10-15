@@ -13,7 +13,6 @@ with receivers operated by multiple tools. Supports:
 - A helper submodule for long-running experiments (Campaigns)
 - Campaign (de-)serialization, allowing to rerun failed parts of campaigns
 
-
 ## Initial Setup
 
 Before being able to use the things in this repo, some things have to be set up.
@@ -85,7 +84,7 @@ General notes for using the routers:
 
 1. Install Matlab together with WLan Toolbox into `matlab_path`
 1. Patch Toolbox using `./matlab/patch_wlan_toolbox.sh $matlab_path`
-1. Setup a venv `python venv .venv && source .venv/bin/activate` 
+1. Set up a venv `python -m venv .venv && source .venv/bin/activate` 
 1. Install python engine `cd $matlab_path/extern/engines/python && pip install .`
 
 #### SDR
@@ -173,12 +172,3 @@ CSI in monitor mode from any frames not addressed to the weird magic
 MAC address `00:16:ea:12:34:56`. We provide a dedicated frame config
 `InterleavedIQFrameGroupConfig` to have alternating frames addressed
 to the iwl and the other cards.
-
-#### Legacy stuff
-
-### Receiver chainmask
-
-The receiver chain mask can be manually set and read for the installed NICs by
-using the file:
-
-```/sys/kernel/debug/ieee80211/phy0/iwlmvm/rx_chainmask```

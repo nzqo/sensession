@@ -17,7 +17,7 @@ from sensession.campaign.processor import CampaignProcessor
 
 pio.kaleido.scope.mathjax = None
 
-data_dir = Path.cwd() / "data" / "doppler_emulation_slow_2"
+data_dir = Path.cwd() / "data" / "doppler_emulation_slow"
 SHOW: bool = False
 
 
