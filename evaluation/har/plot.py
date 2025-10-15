@@ -18,7 +18,6 @@ Both figures are exported as high-resolution PDFs.
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import polars as pl
 import seaborn as sns
 import plotly.io as pio
@@ -172,9 +171,6 @@ def plot_confusion_matrix(conf_matrix: np.ndarray, out_file: Path | None):
         out_filename : Path | None
             Path to output file (if desired)
     """
-    # Create a DataFrame that follows the global RECEIVER_ORDER.
-    df = pd.DataFrame(conf_matrix, index=RECEIVER_ORDER, columns=RECEIVER_ORDER)
-
     # Set a minimalist white style with a larger font scale for a paper-quality look.
     sns.set_theme(style="white", context="paper", font_scale=2)
 
@@ -183,16 +179,18 @@ def plot_confusion_matrix(conf_matrix: np.ndarray, out_file: Path | None):
 
     # Plot the heatmap with annotations in a subtle dark gray and minimized grid.
     ax = sns.heatmap(
-        df,
+        conf_matrix,
         annot=True,
         fmt=".2f",
-        vmin=0.2,  # Force minimum of color scale
+        vmin=0.2,
         vmax=1.0,
         cmap=tgo_cmap_rev,
         square=True,
         cbar_kws={"shrink": 0.725, "label": ""},
         annot_kws={"size": 18, "weight": "bold", "color": "#4f4f4f"},
-        linewidths=0,  # Remove cell border grid lines.
+        linewidths=0,
+        xticklabels=RECEIVER_ORDER,
+        yticklabels=RECEIVER_ORDER,
     )
 
     # Move x-axis ticks and label to the top
@@ -551,14 +549,26 @@ def plot_offdiag_distribution(
                 if v is not None and not np.isnan(v):
                     records.append({"Method": method, "Accuracy": float(v)})
 
-    # 2) Compute summary stats and sort by median
-    dist_df = pl.from_dicts(records).to_pandas()
-    summary = (
-        dist_df.groupby("Method")["Accuracy"]
-        .agg(["min", "median", "max"])
-        .sort_values("median")
+    # 2) Compute summary stats and sort by median (Polars-only)
+    dist_df = pl.from_dicts(records)
+    summary_pl = (
+        dist_df.group_by("Method")
+        .agg(
+            [
+                pl.col("Accuracy").min().alias("min"),
+                pl.col("Accuracy").median().alias("median"),
+                pl.col("Accuracy").max().alias("max"),
+            ]
+        )
+        .sort("median")
     )
-    methods_order = summary.index.tolist()
+
+    methods_order = summary_pl["Method"].to_list()
+    # Dict: method -> (min, median, max)
+    stats = {
+        r["Method"]: (float(r["min"]), float(r["median"]), float(r["max"]))
+        for r in summary_pl.to_dicts()
+    }
 
     # 3) Build colormap and sample one color per method
     def _rgba_to_hex(rgba):
@@ -566,7 +576,10 @@ def plot_offdiag_distribution(
         return "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
 
     n = len(methods_order)
-    colors = [_rgba_to_hex(tgo_cmap_rev(i / (n - 1))) for i in range(n)]
+    if n <= 1:
+        colors = [_rgba_to_hex(tgo_cmap_rev(0.5))]
+    else:
+        colors = [_rgba_to_hex(tgo_cmap_rev(i / (n - 1))) for i in range(n)]
     color_map = dict(zip(methods_order, colors))
 
     # 4) Styling to match your other plots
@@ -577,7 +590,7 @@ def plot_offdiag_distribution(
     # 5) Build lollipop figure
     fig = go.Figure()
     for method in methods_order:
-        mn, md, mx = summary.loc[method, ["min", "median", "max"]]
+        mn, md, mx = stats[method]
 
         # range line
         fig.add_trace(
@@ -651,63 +664,68 @@ def plot_winner_gap_heatmap(
       • color      = difference between best and runner-up
     Diagonal cells are left blank.
     """
-    methods = list(cross_device_map.keys())
-
     devices = RECEIVER_ORDER
+    n = len(devices)
+    idx = {d: i for i, d in enumerate(devices)}
 
-    # Prepare empty DataFrames
-    gap_df = pd.DataFrame(np.nan, index=devices, columns=devices)
-    annot_df = pd.DataFrame("", index=devices, columns=devices)
-    missing = []
+    # Outputs: numeric gap and text label
+    gap = np.full((n, n), np.nan, dtype=float)
+    labels = np.full((n, n), "", dtype=object)
+    missing_pairs: list[tuple[str, str]] = []
 
-    # Fill gap_df and annot_df
+    def pretty_method(name: str) -> str:
+        # Preserve original LaTeX-y labels
+        return r"$\ell_1$" if name == "ℓ₁" else (r"$\ell_2$" if name == "ℓ₂" else name)
+
+    # Compute, cell by cell, ignoring diagonal
     for test in devices:
         for train in devices:
             if test == train:
                 continue
-            # collect (method, score) pairs
-            vals = []
-            for m in methods:
-                df = cross_device_map[m]
+
+            # Collect (method_label, score) across all methods for this (train, test)
+            scores: list[tuple[str, float]] = []
+            for m, df in cross_device_map.items():
                 row = df.filter(pl.col("Tested on") == test).to_dicts()
                 if not row:
                     continue
-                v = row[0].get(f"Trained on: {train}", None)
-                if v is not None and not np.isnan(v):
-                    method = (
-                        r"$\ell_1$" if m == "ℓ₁" else r"$\ell_2$" if m == "ℓ₂" else m
-                    )
-                    vals.append((method, v))
-            if not vals:
-                missing.append((train, test))
-                annot_df.at[test, train] = "NA"
-            else:
-                # sort descending
-                vals.sort(key=lambda x: x[1], reverse=True)
-                best_m, best_v = vals[0]
-                second_v = vals[1][1] if len(vals) > 1 else best_v
-                gap_df.at[test, train] = best_v - second_v
-                annot_df.at[test, train] = best_m
+                val = row[0].get(f"Trained on: {train}", None)
+                if val is not None and not np.isnan(val):
+                    scores.append((pretty_method(m), float(val)))
 
-    # Report true off-diagonal gaps
-    if missing:
-        msg = ", ".join(f"({t}←{r})" for r, t in missing)
+            i, j = idx[test], idx[train]
+            if not scores:
+                labels[i, j] = "NA"
+                missing_pairs.append((train, test))
+                continue
+
+            # Winner gap: best - runner-up (runner-up == best if only one)
+            scores.sort(key=lambda x: x[1], reverse=True)
+            best_name, best_val = scores[0]
+            second_val = scores[1][1] if len(scores) > 1 else best_val
+            gap[i, j] = best_val - second_val
+            labels[i, j] = best_name
+
+    if missing_pairs:
+        msg = ", ".join(f"({t}←{r})" for r, t in missing_pairs)
         print(f"\n[plot_winner_gap_heatmap] ⚠️  Missing scores for: {msg}\n")
 
-    # Mask diagonal
-    mask = np.eye(len(devices), dtype=bool)
-
-    # Plot
-    sns.set_theme(style="white", context="paper", font_scale=2)
+    # Visuals: identical to your original (mask, cmap, vmax, fonts, placements)
+    mask = np.eye(n, dtype=bool)
+    sns.set_theme(
+        style="white", context="paper", font_scale=2
+    )  # same theme sizing. :contentReference[oaicite:0]{index=0}
     cmap = LinearSegmentedColormap.from_list(
         "something", ["#9c9c9c", "#ffb84d", "#FFA500"], N=256
     )
-    vmax = np.nanmax(gap_df.to_numpy()) if np.isfinite(gap_df.to_numpy()).any() else 1.0
+    vmax = (
+        np.nanmax(gap) if np.isfinite(gap).any() else 1.0
+    )  # ignore NaNs for color scaling. :contentReference[oaicite:1]{index=1}
 
     plt.figure(figsize=(10, 10))
     ax = sns.heatmap(
-        gap_df,
-        annot=annot_df,
+        gap,
+        annot=labels,
         fmt="",
         cmap=cmap,
         vmin=0.0,
@@ -716,8 +734,12 @@ def plot_winner_gap_heatmap(
         square=True,
         linewidths=0,
         cbar_kws={"shrink": 0.775, "label": "Gap to runner-up"},
+        xticklabels=devices,  # explicit tick labels on both axes. :contentReference[oaicite:2]{index=2}
+        yticklabels=devices,
         annot_kws={"size": 13, "weight": "bold", "color": "#4f4f4f"},
     )
+
+    # Same axis placement, rotations, and colors
     ax.xaxis.tick_top()
     ax.xaxis.set_label_position("top")
     plt.setp(ax.get_xticklabels(), rotation=45, fontsize=20, color="dimgray")
@@ -742,8 +764,8 @@ def main():
     # Direct comparison of unscaled and agcscaled
     for pre in ["un", "agc"]:
         # Define paths for CSV data.
-        on_device_csv = data_path / f"on-device/{pre}scaled_botonghar_kfold_summary.csv"
-        cross_device_csv = data_path / f"cross-device/{pre}scaled_botonghar.csv"
+        on_device_csv = data_path / f"on-device-accuracy/{pre}scaled_kfold_summary.csv"
+        cross_device_csv = data_path / f"cross-device-accuracy/{pre}scaled.csv"
 
         # Load CSV files.
         on_device, cross_device = load_data(on_device_csv, cross_device_csv)
@@ -769,7 +791,7 @@ def main():
 
     # 2) composite heat-map
     plot_winner_gap_heatmap(
-        cross_device_map, save_path=img_path / "winnter-gap-heatmap.pdf"
+        cross_device_map, save_path=img_path / "winner-gap-heatmap.pdf"
     )
 
 
@@ -777,28 +799,30 @@ if __name__ == "__main__":
     # Read data
     # fmt: off
 
-    data_path = Path("data/har")
+    data_path = Path("data/aril-har")
     img_path  = data_path / "img"
-    a = read_csv(data_path / "on-device/unscaled_botonghar_kfold_summary.csv")
-    b = read_csv(data_path / "on-device/agcscaled_botonghar_kfold_summary.csv")
+    img_path.mkdir(exist_ok=True, parents=True)
+
+    a = read_csv(data_path / "on-device-accuracy/unscaled_kfold_summary.csv")
+    b = read_csv(data_path / "on-device-accuracy/agcscaled_kfold_summary.csv")
 
     cross_device_map = {
         # Rescaling for recovery or explicit removal of AGC
-        "raw":             pl.read_csv(data_path / "cross-device/unscaled_botonghar.csv"),    # Raw data, not preprocessed
-        "ℓ₁":              pl.read_csv(data_path / "cross-device/agcscaled_botonghar.csv"),   # Divided by l1-norm, i.e. mean of absolute values \Cref{eq:amp-norm}
-        "ℓ₂":              pl.read_csv(data_path / "cross-device/rms_botonghar.csv"),         # Divided by l2-norm, i.e. CSI power \cite{ratnam2024optimal, gaussian2020}
-        "RSSI":            pl.read_csv(data_path / "cross-device/rssi_botonghar.csv"),        # Rescaled using RSSI (\Cref{eq:rssi-rescale})
-        "DBSCN":           pl.read_csv(data_path / "cross-device/dbscan_botonghar.csv"),      # DBScan \cite{liu2021wiphone}
-        "GINC":            pl.read_csv(data_path / "cross-device/ratnam_1_botonghar.csv"),    # Gain Increment Clustering, Algorithm 1 from \cite{ratnam2024optimal}
-        "λ-grid":          pl.read_csv(data_path / "cross-device/ratnam_2_botonghar.csv"),    # Uniform grid AGC ML-based optimization, Algorithm 3 from \cite{ratnam2024optimal}
+        "raw":             pl.read_csv(data_path / "cross-device-accuracy/unscaled.csv"),    # Raw data, not preprocessed
+        "ℓ₁":              pl.read_csv(data_path / "cross-device-accuracy/agcscaled.csv"),   # Divided by l1-norm, i.e. mean of absolute values \Cref{eq:amp-norm}
+        "ℓ₂":              pl.read_csv(data_path / "cross-device-accuracy/rms.csv"),         # Divided by l2-norm, i.e. CSI power \cite{ratnam2024optimal, gaussian2020}
+        "RSSI":            pl.read_csv(data_path / "cross-device-accuracy/rssi.csv"),        # Rescaled using RSSI (\Cref{eq:rssi-rescale})
+        "DBSCN":           pl.read_csv(data_path / "cross-device-accuracy/dbscan.csv"),      # DBScan \cite{liu2021wiphone}
+        "GINC":            pl.read_csv(data_path / "cross-device-accuracy/ratnam_1.csv"),    # Gain Increment Clustering, Algorithm 1 from \cite{ratnam2024optimal}
+        "λ-grid":          pl.read_csv(data_path / "cross-device-accuracy/ratnam_2.csv"),    # Uniform grid AGC ML-based optimization, Algorithm 3 from \cite{ratnam2024optimal}
         # The next four are all "smoothing" with different filters, since that is often done
-        "hampel":          pl.read_csv(data_path / "cross-device/hampel_botonghar.csv"),      # Detect outliers based on consistent MAD, replace with running Median. E.g. \cite{liu2015sleep,wisleep2014,deman2015}
-        "median":          pl.read_csv(data_path / "cross-device/rollingmed_botonghar.csv"),  # Rolling median filter \cite{jie2018,seare2020,wisign2017}
-        "savgol":          pl.read_csv(data_path / "cross-device/savgol_botonghar.csv"),      # Savitzky-Golay \cite{yang2021,zeng2018fullbreathe, dou2021full}
-        "wavelet":         pl.read_csv(data_path / "cross-device/wavelet_botonghar.csv"),     # Wavelet denoising \cite{falldefi2018, neuralwave2018, rttwd2017, yangmotion2017,wisleep2014}
+        "hampel":          pl.read_csv(data_path / "cross-device-accuracy/hampel.csv"),      # Detect outliers based on consistent MAD, replace with running Median. E.g. \cite{liu2015sleep,wisleep2014,deman2015}
+        "median":          pl.read_csv(data_path / "cross-device-accuracy/rollingmed.csv"),  # Rolling median filter \cite{jie2018,seare2020,wisign2017}
+        "savgol":          pl.read_csv(data_path / "cross-device-accuracy/savgol.csv"),      # Savitzky-Golay \cite{yang2021,zeng2018fullbreathe, dou2021full}
+        "wavelet":         pl.read_csv(data_path / "cross-device-accuracy/wavelet.csv"),     # Wavelet denoising \cite{falldefi2018, neuralwave2018, rttwd2017, yangmotion2017,wisleep2014}
         # Using derived features that are amplitude invariant to begin with
-        "morph":           pl.read_csv(data_path / "cross-device/morphology_botonghar.csv"),  # Morphological feature, from \cite{chen2023}
-        "ratio":           pl.read_csv(data_path / "cross-device/doublediff_botonghar.csv"),  # Double ratio, from \cite{yi2024enabling}
+        "morph":           pl.read_csv(data_path / "cross-device-accuracy/morphology.csv"),  # Morphological feature, from \cite{chen2023}
+        "ratio":           pl.read_csv(data_path / "cross-device-accuracy/doublediff.csv"),  # Double ratio, from \cite{yi2024enabling}
     }
     # fmt: on
 

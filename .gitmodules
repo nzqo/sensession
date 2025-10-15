@@ -7,3 +7,6 @@
 [submodule "csi_tools/sensei"]
 	path = csi_tools/sensei
 	url = https://github.com/nzqo/sensei.git
+[submodule "csi_tools/csi_go"]
+	path = csi_tools/csi_go
+	url = https://github.com/nzqo/csi-go.git

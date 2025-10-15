@@ -290,12 +290,12 @@ class EightyMhzExperiment:
 
 
 if __name__ == "__main__":
-    experiment = EightyMhzExperiment("test_botong")
+    experiment = EightyMhzExperiment("test")
 
     ACTIVITY_IDX: int = 4
     POSITION_IDX: int = 1
     REPS: int = 10
-    SUBJECT_NAME: str = "Botong"
+    SUBJECT_NAME: str = "Subject1"
 
     for i in range(REPS):
         experiment.add_session(
