@@ -247,8 +247,6 @@ class GeneratedFrameInfo:
     frame_file   : Path                    # Full path to generated file
     created_at   : datetime                # Time of creation
     file_size    : int                     # Size of the associated IQ-sample file
-
-TRIVIAL_name: str = "_unmodified"
 # fmt: on
 
 

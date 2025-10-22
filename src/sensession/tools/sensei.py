@@ -70,7 +70,7 @@ class Sensei(CsiReceiver):
                     f"Couldn't connect to {config.short_name} at "
                     + f"{addr}/{config.remote_resource_id}. "
                     + "Likely no remote sensei instance running or firewall problem."
-                )
+                ) from e
             raise RuntimeError("Couldn't connect to remote sensei server") from e
         self.data_queues[config.device_id()] = (config.short_name, Queue())
 
