@@ -4,7 +4,6 @@ Small application to handle some things from the command line more conveniently
 """
 
 import shutil
-from typing import List
 from pathlib import Path
 
 import rich
@@ -41,7 +40,7 @@ def try_campaign(campaign: Campaign) -> Campaign | None:
     return None if remaining_camp.is_empty() else remaining_camp
 
 
-def overwrite_campaign_file(file: Path, campaigns: List[Campaign]):
+def overwrite_campaign_file(file: Path, campaigns: list[Campaign]):
     """
     Overwrite campaign file, or remove if it is empty.
     """

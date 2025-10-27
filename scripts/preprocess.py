@@ -4,7 +4,6 @@ of relevant features to save some memory later.
 """
 
 import sys
-from typing import List
 from pathlib import Path
 from datetime import timedelta
 
@@ -78,7 +77,7 @@ def prepare_data(
     data_dir: Path,
     num_csi_per_sample_window: int = 800,
     target_dir: Path = None,
-    position: List[int] = [0, 1, 2, 3],
+    position: list[int] = [0, 1, 2, 3],
 ):
     """
     Prepare data from the raw captured data:
