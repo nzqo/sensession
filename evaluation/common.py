@@ -53,16 +53,18 @@ RECEIVER_ORDER = [
 DARK_TEAL = "#0d7d87"
 LIGHT_TEAL = "#3aa0a6"
 LIGHT_GRAY = "#9c9c9c"
-LIGHT_ORAGE = "#ffb84d"
+DARK_GRAY = "#555555"
+LIGHT_ORANGE = "#ffb84d"
 DARK_ORANGE = "#FFA500"
 WHITE = "#ffffff"
 BLACK = "#000000"
+LIGHT_RED = "#C97078"
 
 tgo_palette = [
     DARK_TEAL,
     LIGHT_TEAL,  # saturated teal branch
     LIGHT_GRAY,  # neutral light grey
-    LIGHT_ORAGE,  # saturated orange branch
+    LIGHT_ORANGE,  # saturated orange branch
     DARK_ORANGE,
 ]
 
@@ -118,7 +120,7 @@ def subcarrier_barplot(df: pl.DataFrame, y: str, ylabel: str, file: Path):
         x="receiver_name",
         y=y,
         hue="modified_idx",
-        palette=palette,
+        palette=palette,  # type: ignore
         dodge=True,
         saturation=0.95,
         order=unique_receivers,
@@ -186,7 +188,7 @@ def subcarrier_dual_barplot(
         x="receiver_name",
         y=y,
         hue="modified_idx",
-        palette=palette,
+        palette=palette,  # type: ignore
         dodge=True,
         saturation=0.95,
         order=left_receivers,
@@ -206,7 +208,7 @@ def subcarrier_dual_barplot(
         x="receiver_name",
         y=y,
         hue="modified_idx",
-        palette=palette,
+        palette=palette,  # type: ignore
         dodge=True,
         saturation=0.95,
         ax=axes[1],

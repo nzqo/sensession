@@ -98,8 +98,9 @@ class UhdUsrp:
 
         # Assemble command, possibly piping it through SSH onto a remote, if the
         # transmitter is not available locally on the current machine
+        script_path = APP_CONFIG.script_dir / "transmit_from_sdr.sh"
         shell_cmd = Command(
-            f"./scripts/transmit_from_sdr.sh {filename} "
+            f"{script_path} {filename} "
             f"{freq} "
             f"{tx_config.gain} "
             f"{rate} "

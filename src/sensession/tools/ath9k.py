@@ -7,7 +7,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from sensession.config import Channel
+from sensession.config import APP_CONFIG, Channel
 from sensession.devices import Ath9kNIC, NetworkInterfaceMode
 from sensession.tools.tool import DeviceId, CsiReceiver, CaptureResult, BaseFrameConfig
 from sensession.util.shell import shell_run
@@ -151,7 +151,8 @@ class Ath9k(CsiReceiver):
             # If we run locally, no need to perform any marshalling. Because of sudo
             # cleanup permission issues with subprocess, we wrap capturing in a shell
             # script and clean up with a cleanup command.
-            capture_cmd = f"./scripts/capture_qca.sh {repo_path} {self.tmp_file.path}"
+            script_path = APP_CONFIG.script_dir / "capture_qca.sh"
+            capture_cmd = f"{script_path} {repo_path} {self.tmp_file.path}"
             cleanup_cmd = "sudo pkill csi-extractor"
 
         self.tmp_capture_cmd = capture_cmd

@@ -27,6 +27,7 @@ Example:
 EOF
 }
 
+
 # Parse arguments
 addr="$DEFAULT_ADDR"
 host="$DEFAULT_HOST"
@@ -62,6 +63,7 @@ for tool in zip ssh; do
   fi
 done
 
+
 # Validate input directory
 if [[ ! -d "$input_dir" ]]; then
   echo "Error: Input directory '$input_dir' does not exist." >&2
@@ -89,7 +91,7 @@ echo "transmitting zipped file"
 
 cat "$TMP_FILE" | ssh "$addr" "cat > $REMOTE_TMP"
 
-# Your original SSH block, exactly unchanged
+# SSH connection
 echo "Connecting to remote router via SSH..."
 
 # NOTE: This SHOULD expand on the router. So this warning is irrelevant.

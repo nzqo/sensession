@@ -120,13 +120,13 @@ class Nexmon(CsiReceiver):
                 + f" -- destination ip    : {device.config.host_ip}\n"
             )
 
-            script_path = APP_CONFIG.script_dir / "nexmon"
-
+            script_path = APP_CONFIG.script_dir
             self.bg_process.start_process(
                 shell_command=(
-                    f"{script_path}/csi_capture_start.sh {device.config.netcat_port} {tmp_file.path}"
+                    f"{script_path}/nexmon/csi_capture_start.sh"
+                    + f" {device.config.netcat_port} {tmp_file.path}"
                 ),
-                cleanup_command=f"{script_path}/csi_capture_stop.sh",
+                cleanup_command=f"{script_path}/nexmon/csi_capture_stop.sh",
             )
 
         self.tmp_channel = channel
@@ -145,15 +145,16 @@ class Nexmon(CsiReceiver):
         # Start CSI forwarding stream on Nexmon devices
         for device in self.tmp_capture_devices.values():
             ssh_name = device.config.access_cfg.remote_ssh_hostname
+            script_path = APP_CONFIG.script_dir
             self.bg_process.start_process(
                 shell_command=(
-                    "./scripts/nexmon/csi_stream_start.sh "
+                    f"{script_path}/nexmon/csi_stream_start.sh "
                     f"{ssh_name} "
                     f"{interface} "
                     f"{device.config.netcat_port} "
                     f"{device.config.host_ip}"
                 ),
-                cleanup_command=f"./scripts/nexmon/csi_stream_stop.sh {ssh_name}",
+                cleanup_command=f"{script_path}/nexmon/csi_stream_stop.sh {ssh_name}",
             )
 
     def _stop(self):

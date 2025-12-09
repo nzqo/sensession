@@ -33,6 +33,10 @@ def preprocess(csi: pl.DataFrame, meta: pl.DataFrame):
         .equalize_phase()
         .drop_contains("collection_name", "warmup")
     )
+
+    assert isinstance(proc.csi, pl.DataFrame), "lazy=false; csi must be DataFrame"
+    assert isinstance(proc.meta, pl.DataFrame), "lazy=false; meta must be DataFrame"
+
     csi = proc.csi
     csi = csi.filter(pl.col("sequence_number") < 2).filter(pl.col("receiver_name").is_in(["x310", "ax210"]))
     csi = csi.drop("stream_idxs", "antenna_idxs", "rssi", "antenna_rssi", "timestamp", "stream_capture_num", "rx_antenna_capture_num", "capture_num", "collection_name")

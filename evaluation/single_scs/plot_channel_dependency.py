@@ -1,30 +1,40 @@
+"""
+Plot channel-dependent results of single-subcarrier precoding.
+
+NOTE: This requires to have run
+> python -m evaluation.single_scs.preprocess
+
+which computes all the required results first and caches them.
+Or download the results (single_phases_results and single_scs_results)
+"""
+
 import sys
 import math
 from enum import Enum
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import seaborn as sns
 import matplotlib.pyplot as plt
 from loguru import logger
 from matplotlib.lines import Line2D
 from evaluation.common import (
-    RECEIVER_ORDER,  # Ensure receivers appear in this given order
-)
-from evaluation.common import (
     SHOW_PLT,
-    palette,
+    LIGHT_RED,
+    LIGHT_GRAY,
+    LIGHT_TEAL,
+    LIGHT_ORANGE,
+    RECEIVER_ORDER,
 )
-from matplotlib.colors import LinearSegmentedColormap
 
 
 class Mode(Enum):
+    """
+    Whether to process single-subcarrier phase or amplitude precoding.
+    """
+
     AMP = 0
     PHASE = 1
-
-
-MODE = Mode.AMP
 
 
 def channel_receiver_facet_plot(df: pl.DataFrame, y: str, ylabel: str, file: Path):
@@ -39,7 +49,7 @@ def channel_receiver_facet_plot(df: pl.DataFrame, y: str, ylabel: str, file: Pat
 
     Args:
         df: DataFrame containing columns "channel", "receiver_name", "antenna_idx", and the metric column (y).
-        y: The name of the metric to plot (e.g. "log_rsquared_diff").
+        y: The name of the metric to plot (e.g. "mutual_info").
         ylabel: The label for the y-axis.
         file: Output file path for saving the plot.
     """
@@ -56,23 +66,14 @@ def channel_receiver_facet_plot(df: pl.DataFrame, y: str, ylabel: str, file: Pat
 
     # Prepare a color palette for antenna_idx.
     unique_antennas = sorted(plot_df["antenna_idx"].unique())
-    if palette:
-        if isinstance(palette, LinearSegmentedColormap):
-            color_palette = [
-                palette(x) for x in np.linspace(0, 1, len(unique_antennas))
-            ]
-        elif isinstance(palette, (list, tuple)):
-            if len(palette) < len(unique_antennas):
-                color_palette = sns.color_palette("deep", len(unique_antennas))
-            else:
-                color_palette = palette[: len(unique_antennas)]
-        else:
-            try:
-                color_palette = sns.color_palette(palette, len(unique_antennas))
-            except Exception:
-                color_palette = sns.color_palette("deep", len(unique_antennas))
-    else:
-        color_palette = sns.color_palette("deep", len(unique_antennas))
+
+    color_palette = [
+        LIGHT_ORANGE,  # antenna 1
+        LIGHT_GRAY,  # antenna 2
+        LIGHT_TEAL,  # antenna 3
+        LIGHT_RED,  # antenna 0
+    ]
+
     color_map = {ant: col for ant, col in zip(unique_antennas, color_palette)}
 
     # Determine the number of facets (receivers) and compute ncol so that facets are arranged in 2 rows.
@@ -108,8 +109,8 @@ def channel_receiver_facet_plot(df: pl.DataFrame, y: str, ylabel: str, file: Pat
         ax.tick_params(axis="y", labelsize=12)
 
     # Remove any automatically generated legend from the facets.
-    if g._legend:
-        g._legend.remove()
+    if g._legend:  # type: ignore
+        g._legend.remove()  # type: ignore
 
     # Increase the x-axis margin in every facet so points are not cut off.
     for ax in g.axes.flatten():
@@ -156,19 +157,19 @@ def channel_receiver_facet_plot(df: pl.DataFrame, y: str, ylabel: str, file: Pat
         plt.show()
 
 
-if __name__ == "__main__":
-    logger.remove()
-    logger.add(sys.stderr, level="TRACE")
-
-    # Define the channels and corresponding file names.
-    channels = [1, 6, 11, 36, 40, 44, 157]
-    name = "single_phases" if MODE == Mode.PHASE else "single_scs"
-    pre = "phase" if MODE == Mode.PHASE else "abs"
+def main(mode: Mode):
+    """
+    Single-subcarrier precoding evaluations.
+    """
+    name = "single_phases_results" if mode == Mode.PHASE else "single_scs_results"
+    pre = "phase" if mode == Mode.PHASE else "abs"
+    label = r"$\bar{D}^{phs}_k(H)$" if mode == Mode.PHASE else r"$\bar{D}^{amp}_k(H)$"
 
     data_dir = Path.cwd() / "data" / name
     img_dir = data_dir / "img"
     img_dir.mkdir(exist_ok=True, parents=True)
 
+    # Concatenate experiment results from all channels.
     df_list = []
     for ch in channels:
         file_path = data_dir / f"sensitivity_ch{ch}.parquet"
@@ -185,46 +186,10 @@ if __name__ == "__main__":
         (pl.col("receiver_name") != "iwl5300")
         | (pl.col("modified_idx").is_in(valid_iwl_indices))
     )
-    if MODE == Mode.PHASE:
+    if mode == Mode.PHASE:
         df = df.filter(~pl.col("modified_idx").is_in([-28, 28]))
 
     logger.trace("Data loaded and filtering applied.")
-
-    # Compute metric transformations.
-    df = df.with_columns(
-        (-(1 - pl.col("r_squared")).log10()).alias("log_rsquared_diff")
-    )
-    df = df.with_columns(
-        pearson_sensitivity=(-(1 - pl.col("correlation")).log10()),
-        spearman_sensitivity=(-(1 - pl.col("spearman_corr")).log10()),
-        slope_sensitivity=pl.col("slope").pow(2),
-    )
-    logger.trace("Metric transformations computed.")
-
-    # Produce facet plots for each metric.
-    channel_receiver_facet_plot(
-        df,
-        y="log_rsquared_diff",
-        ylabel=r"$- \log{(1-R^2)}$",
-        file=img_dir / f"{pre}-linearity.pdf",
-    )
-    logger.trace("Finished facet plot for linearity.")
-
-    channel_receiver_facet_plot(
-        df,
-        y="pearson_sensitivity",
-        ylabel="$Pearson Sensitivity$",
-        file=img_dir / f"{pre}-pearson-sensitivity.pdf",
-    )
-    logger.trace("Finished facet plot for Pearson sensitivity.")
-
-    channel_receiver_facet_plot(
-        df,
-        y="spearman_sensitivity",
-        ylabel=r"$\rho$",
-        file=img_dir / f"{pre}-spearman-sensitivity.pdf",
-    )
-    logger.trace("Finished facet plot for Spearman sensitivity.")
 
     channel_receiver_facet_plot(
         df,
@@ -235,15 +200,17 @@ if __name__ == "__main__":
     logger.trace("Finished facet plot for MI sensitivity.")
 
     channel_receiver_facet_plot(
-        df,
-        y="slope_sensitivity",
-        ylabel="$Sensitivity$ (Slope Sensitivity)",
-        file=img_dir / f"{pre}-slope-sensitivity.pdf",
-    )
-    logger.trace("Finished facet plot for slope sensitivity.")
-
-    label = r"$\bar{D}^{phs}_k(H)$" if MODE == Mode.PHASE else r"$\bar{D}^{amp}_k(H)$"
-    channel_receiver_facet_plot(
         df, y="residual", ylabel=label, file=img_dir / f"{pre}-mean-prd.pdf"
     )
     logger.trace("Finished facet plot for deviations.")
+
+
+if __name__ == "__main__":
+    logger.remove()
+    logger.add(sys.stderr, level="TRACE")
+
+    # Define the channels and corresponding file names.
+    channels = [1, 6, 11, 36, 40, 44, 157]
+
+    main(Mode.AMP)
+    main(Mode.PHASE)

@@ -80,6 +80,9 @@ def calculate_sensitivity_stats(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def preprocess(db_path: Path, modality: str):
+    """
+    Run preprocessing to directly read off single-subcarrier changes from the data.
+    """
     num_packets = 1000
 
     meta = pl.DataFrame()
@@ -91,11 +94,9 @@ def preprocess(db_path: Path, modality: str):
     num_scs = meta.item(0, "bandwidth") // 5 * 16
     offset = num_scs // 2
 
-    # NOTE: We dont modify the first phase because of phase normalization
+    # NOTE: We dont modify the first phase because of phase preprocessing
     if "phase" in modality:
         offset -= 1
-
-    print(offset)
 
     # Little hack just for easier visualization later. Gives a common ID to each of the group sessions.
     meta = meta.with_columns(
@@ -153,8 +154,6 @@ def preprocess(db_path: Path, modality: str):
         proc = proc.equalize_magnitude()
     else:
         proc = proc.equalize_phase()
-
-    print(proc.csi.columns)
     proc = proc.meta_attach("modified_idx")
     # fmt: on
 
@@ -169,68 +168,57 @@ def preprocess(db_path: Path, modality: str):
     csi = csi.rename({modality: "scale"})
 
     # We sweep over the different scaling factors, so they are enumerated by the sequence number
-    factor = 1  # if modality == "csi_abs" else np.pi
+    factor = 1  # if modality == "csi_abs" else np.pi (should be fixed in scale_range on disk! just a debug reminder)
     diff = meta.item(0, "scale_range") * factor / num_packets
-    csi = csi.with_columns(scale_factor=pl.col("sequence_number") * diff)
+
+    # fmt: off
+    csi = (csi
+        .with_columns(scale_factor=pl.col("sequence_number") * diff)
+        .filter(pl.col("subcarrier_idxs") == pl.col("modified_idx"))
+        .drop("subcarrier_idxs")
+    )
 
     csi.write_parquet(db_path / "processed.parquet")
     return csi
 
 
-def run(db_path: Path, modality: str):
+def run(db_path: Path, modality: str, prefix: str, channel):
+    """
+    Run one statistics calculation round (for one channel and modality)
+    """
+    # Preprocessing is expensive and takes long (up to a few hours)
+    # Therefore, we cache the processed results in each of the experiment
+    # directories for faster recompute of sensitivity stats.
     procfile = db_path / "processed.parquet"
     if procfile.is_file():
         csi = pl.read_parquet(procfile)
     else:
         csi = preprocess(db_path, modality)
 
-    # Calculate crosstalk errors for every single packet.
-    # NOTE: The combination of meta_id and scale_factor uniquely identifies every packet
-    # The others are just so we dont have to join the columns back in.
-    # crosstalk_error = (
-    #    csi.filter(pl.col("subcarrier_idxs") != pl.col("modified_idx"))
-    #    # NOTE: Remove "1-" for phases
-    #    .with_columns(crosstalk_error=(1-pl.col("scale")).abs()) #1 - pl.col("scale")).abs())
-    #    .group_by(["meta_id", "scale_factor", "receiver_name", "modified_idx"])
-    #    .agg(pl.col("crosstalk_error").mean().alias("average_crosstalk"))
-    # )
-    # crosstalk_error.write_parquet(checkpoint_dir / "crosstalk.parquet")
-
-    # fmt: off
-    csi = (csi
-        .filter(pl.col("subcarrier_idxs") == pl.col("modified_idx"))
-        .drop("subcarrier_idxs")
-    )
-    # fmt: on
-
-    # first calculate r-squared as linearity measure for the whole distribution:
+    # preprocessed data is already filtered to modified_idx now
     r_sq = calculate_sensitivity_stats(csi)
-    r_sq.write_parquet(db_path / "sensitivity_full.parquet")
 
-    # Calculate the mean detected CSI changes
-    # mean_csi = (
-    #    csi.group_by(
-    #        "receiver_name",
-    #        "modified_idx",
-    #        "scale_factor",
-    #        "antenna_idxs",
-    #        maintain_order=True,
-    #    )
-    #    .agg(pl.col("scale").mean(), pl.col("scale").var().alias("variance"))
-    #    .fill_null(0.0)
-    # )
-    # mean_csi.write_parquet(db_path / "means.parquet")
+    # shared results directory per prefix
+    results_dir = data_root / f"{prefix}_results"
+    results_dir.mkdir(exist_ok=True)
 
-    ## Now calculate r-squared measure fitting only through the averaged data
-    # r_sq = calculate_sensitivity_stats(mean_csi)
-    # r_sq.write_parquet(db_path / "sensitivity_of_averages.parquet")
+    out_path = results_dir / f"sensitivity_ch{channel}.parquet"
+    r_sq.write_parquet(out_path)
 
 
 if __name__ == "__main__":
-    # for ch in ["01", "06", "11", "36", "40", "44", "157"]:
-    # collection_name = f"single_phases_ch{ch}"
-    collection_name = "single_scs_40mhz"
-    modality = "csi_abs"
-    db_path = Path.cwd() / "data" / collection_name
-    run(db_path, modality)
-    gc.collect()
+    channels = ["01", "06", "11", "36", "40", "44", "157"]
+    data_root = Path.cwd() / "data"
+
+    # (modality, collection_name_prefix)
+    experiments = [
+        ("csi_abs", "single_scs"),
+        ("csi_phase", "single_phases"),
+    ]
+
+    for modality, prefix in experiments:
+        for ch in channels:
+            collection_name = f"{prefix}_ch{ch}"
+            db_path = data_root / collection_name
+            run(db_path, modality, prefix, ch)
+            gc.collect()

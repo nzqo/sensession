@@ -334,7 +334,7 @@ class EnvironmentConfig:
     keep_tmp_files      : bool = False                   # Keep temporary files (e.g. nexmon pcap captures)
     overwrite_tmp_files : bool = True                    # Whether to overwrite existing tmp files
     cache_dir           : Path = Path.cwd() / ".cache"   # Directory of cache
-    script_dir          : Path = Path.cwd() / "scripts" # Directory of helper scripts
+    script_dir          : Path = Path.cwd() / "scripts"  # Directory of helper scripts
     cache_trim          : int  = int(1e10)               # Byte size after which to trim frame cache to avoid blow up
     matlab_batch_size   : int  = 10                      # Number of frames to generate in parallel during generation time
     max_matlab_worker   : int  = 4                       # Max number of parallel matlab instances for parallelization pool
@@ -343,13 +343,13 @@ class EnvironmentConfig:
     shell_timeout_s     : int  = 600                     # Maximum time to wait for a shell subprocess
     wait_after_logs     : int | None = None              # For some logs, for readability, it makes sense to wait after. Only in interactive sessions.
     lazy_database       : bool = False                   # Whether to use/write DataFrame in lazy mode. Makes sense for very large experiments.
+# fmt: on
 
     def __post_init__(self):
         if isinstance(self.script_dir, str):
             self.script_dir = Path(self.script_dir)
         if isinstance(self.cache_dir, str):
             self.cache_dir = Path(self.cache_dir)
-# fmt: on
 
 
 #######################################################################################

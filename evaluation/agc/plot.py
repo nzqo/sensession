@@ -27,9 +27,7 @@ def load_data(basedir: Path) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     return curves, meta, csi
 
 
-def process_csi_data(
-    csi: pl.DataFrame, meta: pl.DataFrame
-) -> tuple[pl.DataFrame, pl.DataFrame]:
+def process_csi_data(csi: pl.DataFrame, meta: pl.DataFrame) -> pl.DataFrame:
     """
     Process the CSI data using CampaignProcessor.
 
@@ -54,6 +52,7 @@ def process_csi_data(
     )
 
     # Extract only the necessary fields for both datasets
+    assert isinstance(proc.csi, pl.DataFrame), "lazy=false; csi must be DataFrame"
     csi = proc.csi.drop(
         "stream_capture_num",
         "rx_antenna_capture_num",

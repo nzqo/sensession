@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from sensession.config import Channel, MacAddr
+from sensession.config import APP_CONFIG, Channel, MacAddr
 from sensession.util.net import get_sideband_value
 from sensession.util.hash import get_hash
 from sensession.util.shell import shell_run
@@ -104,8 +104,9 @@ class NexmonRouter:
             recv_antenna_bitmask = antenna_idxs_to_bitmask(self.config.antenna_idxs)
             stream_bitmask = antenna_idxs_to_bitmask(self.config.stream_idxs)
 
+            script_path = APP_CONFIG.script_dir / "nexmon" / "setup_interface.sh"
             shell_run(
-                "./scripts/nexmon/setup_interface.sh "
+                f"{script_path} "
                 + f"{self.config.access_cfg.remote_ssh_hostname} "
                 + f"{interface} "
                 + f"{channel.number} "

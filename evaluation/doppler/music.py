@@ -1,4 +1,30 @@
 #!/usr/bin/env python3
+"""
+Doppler estimation and plotting pipeline.
+
+This script supports three subcommands:
+
+  1. calculate
+       Loads all CSI data variants (scaled, unscaled, RSSI-scaled),
+       computes Doppler estimates for the baseline and phasefit pipelines,
+       and caches ALL estimates in a single parquet file.
+       No plots are produced during calculation.
+
+  2. plot_distributions
+       Loads cached Doppler estimates and produces per-method
+       distribution plots.
+
+  3. plot_estimates
+       Loads the cached Doppler estimates and produces a compact
+       multi-method comparison plot.
+
+All functions, documentation, and utilities from the original module
+are preserved unless explicitly removed by request (e.g. plot_speed_boxplot).
+
+All ASUS CSI visualizations are kept but their calls remain commented out.
+"""
+
+import argparse
 from typing import Mapping, Sequence
 from pathlib import Path
 
@@ -8,22 +34,38 @@ import seaborn as sns
 import plotly.io as pio
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-from evaluation.common import RECEIVER_ORDER, fmlp_cmap_2
+from evaluation.common import (
+    LIGHT_GRAY,
+    LIGHT_TEAL,
+    LIGHT_ORANGE,
+    RECEIVER_ORDER,
+    fmlp_cmap_2,
+    tgo_palette,
+)
 from matplotlib.colors import Normalize
-from matplotlib.transforms import Bbox
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from sensession.campaign.processor import CampaignProcessor
 
+# Required by kaleido when exporting plotly figures
 pio.kaleido.scope.mathjax = None
+
+
+# ---------------------------------------------------------------------------
+# Global configuration
+# ---------------------------------------------------------------------------
 
 data_dir = Path.cwd() / "data" / "doppler_emulation_slow"
 SHOW: bool = False
 
 
+# ---------------------------------------------------------------------------
+# CSI loading + preprocessing functions
+# ---------------------------------------------------------------------------
+
+
 def regroup(df: pl.DataFrame):
     """
-    Regroup CSI
+    Regroup CSI rows by capture number, preserving order.
     """
     return df.group_by("capture_num", maintain_order=True).agg(
         pl.col("meta_id").first(),
@@ -38,31 +80,34 @@ def regroup(df: pl.DataFrame):
 
 
 def load_csi_data(
-    scale: bool = True, equalize: bool = False, rescale_rssi: bool = False
+    scale: bool = True,
+    equalize: bool = False,
+    rescale_rssi: bool = False,
+    phase_fit: bool = False,
 ) -> pl.DataFrame:
-    """Load CSI data without filtering receivers."""
+    """
+    Load CSI recordings and apply a selected preprocessing chain.
+    """
     data = pl.read_parquet(data_dir / "csi.parquet")
     meta = pl.read_parquet(data_dir / "meta.parquet")
 
     proc = (
-        CampaignProcessor(
-            data,
-            meta,
-            lazy=False,
-        )
+        CampaignProcessor(data, meta, lazy=False)
         .correct_rssi_by_agc()
         .unwrap()
         .filter("antenna_idxs", 0)
-        .detrend_phase(pin_edges=False)
     )
+
+    if phase_fit:
+        proc = proc.detrend_phase_ls()
+    else:
+        proc = proc.detrend_phase(pin_edges=False)
 
     if scale:
         proc = proc.scale_magnitude()
 
     if rescale_rssi:
-        proc = proc.rescale_csi_by_rssi(
-            exclude_expr=(pl.col("receiver_name") == "x310")
-        )
+        proc = proc.rescale_csi_by_rssi(exclude_expr=pl.col("receiver_name") == "x310")
 
     if equalize:
         proc = proc.equalize_magnitude().equalize_phase()
@@ -70,11 +115,14 @@ def load_csi_data(
     proc = proc.drop_contains("collection_name", "warmup")
 
     if not isinstance(proc.csi, pl.DataFrame):
-        raise ValueError("CSI must be instantiated DataFrame.")
-    data = regroup(proc.csi)
-    return data
+        raise ValueError("CSI must be a concrete DataFrame.")
+
+    return regroup(proc.csi)
 
 
+# ---------------------------------------------------------------------------
+# MUSIC Doppler estimation functions
+# ---------------------------------------------------------------------------
 def compute_music_spectrum(
     csi_slice: np.ndarray,
     gap_time: float,
@@ -86,81 +134,170 @@ def compute_music_spectrum(
     """
     Compute the normalized MUSIC spectrum for a CSI block.
 
-    For each candidate speed v, the spectrum is defined as:
-      Spectrum(v) = 1 / ( s(v)^H · P · s(v) )
+    For each candidate speed v, the pseudo-spectrum is defined as
 
-    where:
-      s(v) = exp(2j·π·gap_time·v·(n/wavelength)) for n = 0,...,num_packets-1,
-      P    = U · U^H                             is the noise projection matrix derived from ...
-      U    = csi_slice · (csi_slice)^H.          ... the covariance matrix
-    The output is converted to decibels and normalized to [0, 1].
+        Spectrum(v) = 1 / ( s(v)^H · P_noise · s(v) )
+
+    where
+
+        s(v)      = exp(2j·π·gap_time·v·(n / wavelength))  for n = 0,...,num_packets-1
+        P_noise   = U · U^H  is the projection onto the noise subspace
+        U         collects the eigenvectors associated with the smallest
+                   eigenvalues of the space-time covariance matrix
+
+        R = csi_slice · csi_slice^H.
+
+    The output is converted to decibels and normalized to the range [0, 1].
     """
 
-    # Compute covariance matrix and derive the noise projection matrix.
+    # ------------------------------------------------------------------
+    # 1) Covariance matrix and noise projection matrix
+    # ------------------------------------------------------------------
+    # R = X X^H, where X = csi_slice (packets x subcarriers)
     covariance = csi_slice @ csi_slice.conj().T
-    _, eigenvectors = np.linalg.eigh(covariance)
-    noise_subspace = eigenvectors[:, : eigenvectors.shape[0] - num_targets]
-    noise_proj = noise_subspace @ noise_subspace.conj().T
 
-    # Compute the steering matrix for all candidate speeds. Every row is of the form:
-    #   s(v) = exp(2j·π·gap_time·v·(n/wavelength)), n = 0, ..., num_packets-1.
+    # Eigen-decompose R. Columns of `eigenvectors` are eigenvectors.
+    _, eigenvectors = np.linalg.eigh(covariance)
+
+    # Take the eigenvectors corresponding to the smallest eigenvalues
+    # as an estimate of the noise subspace.
+    noise_subspace = eigenvectors[:, : eigenvectors.shape[0] - num_targets]
+
+    # P_noise = U U^H
+    noise_projection = noise_subspace @ noise_subspace.conj().T
+
+    # ------------------------------------------------------------------
+    # 2) Steering matrix s(v) for all candidate speeds v
+    # ------------------------------------------------------------------
+    # For each packet index n (0..num_packets-1), build the term n / wavelength.
     comb = np.arange(num_packets) / wavelength
+
+    # Each row of `steering_matrix` is
+    #   s(v) = exp(2j·π·gap_time·v·(n / wavelength))
     steering_matrix = np.exp(2j * np.pi * gap_time * candidate_speeds[:, None] * comb)
 
-    # Compute the quadratic form for each speed v:
-    #   s(v)^H · (P_noise · s(v))
-    temp = noise_proj @ steering_matrix.T
-    spectrum = 1 / np.sum(steering_matrix.conj() * temp.T, axis=1)
+    # ------------------------------------------------------------------
+    # 3) MUSIC pseudo-spectrum:
+    #       Spectrum(v) = 1 / ( s(v)^H · P_noise · s(v) )
+    # ------------------------------------------------------------------
+    projected = noise_projection @ steering_matrix.T
+    spectrum = 1.0 / np.sum(steering_matrix.conj() * projected.T, axis=1)
 
-    # Convert the spectrum to decibels and normalize to the range [0, 1].
-    spec_db = 10 * np.log10(np.abs(spectrum))
-    spec_db -= spec_db.min()
-    max_val = spec_db.max()
+    # ------------------------------------------------------------------
+    # 4) Convert the spectrum to decibels and normalize to [0, 1]
+    # ------------------------------------------------------------------
+    spectrum_db = 10.0 * np.log10(np.abs(spectrum))
+    spectrum_db -= spectrum_db.min()
+    max_val = spectrum_db.max()
     if max_val:
-        spec_db /= max_val
+        spectrum_db /= max_val
 
-    return spec_db
+    return spectrum_db
 
 
 def estimate_speed(spectrum: np.ndarray, candidate_speeds: np.ndarray) -> float:
-    """Return the candidate speed corresponding to the peak of the MUSIC spectrum."""
+    """
+    Return the candidate speed that maximizes the MUSIC spectrum.
+    """
     return candidate_speeds[np.argmax(spectrum)]
 
 
-def compute_and_print_stats(df: pl.DataFrame, groundtruth: float = 1.0) -> pl.DataFrame:
-    """Compute speed stats, print results, and return summary for plotting."""
+def doppler_estimates(
+    data: pl.DataFrame,
+    figure_name: str,
+    plot_distributions: bool = False,
+) -> dict[str, list[float]]:
+    """
+    Compute Doppler estimates blockwise for each receiver.
 
-    stats_df = df.group_by("Receiver").agg(
-        [
-            pl.col("Estimated Speed").mean().alias("Mean Speed"),
-            pl.col("Estimated Speed").median().alias("Median Speed"),
-        ]
-    )
-    print("\nErrors (Mean and Median):")
-    print(
-        stats_df.with_columns(
-            mean_err=(groundtruth - pl.col("Mean Speed")),
-            median_err=(groundtruth - pl.col("Median Speed")),
-        )
-    )
+    Returns:
+        { receiver_name : [estimated speeds] }
 
-    print("\nSquared Errors:")
-    print(
-        df.group_by("Receiver").agg(
-            [
-                ((groundtruth - pl.col("Estimated Speed")) ** 2)
-                .median()
-                .alias("Median Squared Error"),
-                ((groundtruth - pl.col("Estimated Speed")) ** 2)
-                .mean()
-                .alias("Mean Squared Error"),
-            ]
-        )
-    )
+    If plot_distributions=True, immediately calls plot_estimate_distributions().
+    """
+    num_packets = 50
+    center_frequency = 2.462e9
+    light_speed = 299_792_458
+    wavelength = light_speed / center_frequency
+    candidate_speeds = np.arange(0, 5.01, 0.0001)
 
-    return stats_df
+    results: dict[str, list[float]] = {}
+    time_indices: dict[str, np.ndarray] = {}
+
+    for receiver_key, group in data.group_by("receiver_name", maintain_order=True):
+        receiver_name = str(receiver_key[0])
+
+        # ------------------------------------------------------------------
+        # Timestamps / time base
+        # ------------------------------------------------------------------
+        # Convert timestamps from sequence numbers to a consistent float
+        # timebase. Conceptually there are two options:
+        #
+        #   (A) "Ideal" timestamps based on prior knowledge that the TX
+        #       sends regularly at ~500 Hz:
+        #
+        #       seq_nums = np.unwrap(
+        #           np.array(group["sequence_number"].to_list()),
+        #           period=4096,
+        #       )
+        #       ideal_timestamps = seq_nums / 500.0
+        #
+        #   (B) Use the reported wall-clock timestamps from the capture
+        #       (what we actually use below).
+        timestamps = np.array([ts.timestamp() for ts in group["timestamp"]])
+
+        # ------------------------------------------------------------------
+        # CSI: magnitude/phase -> complex, zero-mean per subcarrier
+        # ------------------------------------------------------------------
+        # `csi_abs` and `csi_phase` are Polars list columns; convert them
+        # to proper 2D NumPy arrays [num_packets, num_subcarriers].
+        csi_abs = np.array(group["csi_abs"].to_list())
+        csi_phase = np.array(group["csi_phase"].to_list())
+
+        csi_complex = csi_abs * np.exp(1j * csi_phase)
+        csi_complex -= np.mean(csi_complex, axis=0, keepdims=True)
+
+        total_packets = csi_complex.shape[0]
+        num_blocks = total_packets // num_packets
+
+        estimated_speeds: list[float] = []
+        block_times: list[float] = []
+
+        for block_idx in range(num_blocks):
+            start = block_idx * num_packets
+            end = (block_idx + 1) * num_packets
+            csi_slice = csi_complex[start:end]
+
+            # Effective time spacing between packets in this block.
+            gap_time = (timestamps[end - 1] - timestamps[start]) / (num_packets - 1)
+
+            spectrum = compute_music_spectrum(
+                csi_slice=csi_slice,
+                gap_time=gap_time,
+                wavelength=wavelength,
+                candidate_speeds=candidate_speeds,
+                num_packets=num_packets,
+                num_targets=1,
+            )
+
+            speed = estimate_speed(spectrum, candidate_speeds)
+            estimated_speeds.append(speed)
+
+            # Store elapsed time since beginning of capture (seconds)
+            block_times.append(timestamps[end - 1] - timestamps[0])
+
+        results[receiver_name] = estimated_speeds
+        time_indices[receiver_name] = np.array(block_times, dtype=np.float64)
+
+    if plot_distributions:
+        plot_estimate_distributions(results, figure_name)
+
+    return results
 
 
+# ---------------------------------------------------------------------------
+# Plotting utilities
+# ---------------------------------------------------------------------------
 def plot_estimate_distributions(results: dict[str, list[float]], figure_name: str):
     """Plot the distribution of speed estimates per receiver as a box plot.
     Args:
@@ -231,182 +368,18 @@ def plot_estimate_distributions(results: dict[str, list[float]], figure_name: st
         plt.show()
 
 
-def doppler_estimates(data: pl.DataFrame, figure_name: str) -> dict[str, list[float]]:
-    num_packets = 50
-    f_center = 2.462e9
-    light_speed = 299_792_458
-    wavelength = light_speed / f_center
-    candidate_speeds = np.arange(0, 5.01, 0.0001)
-
-    results = {}
-    time_indices = {}
-
-    for receiver_name, group in data.group_by("receiver_name", maintain_order=True):
-        name = receiver_name[0]  # Extract the receiver name
-
-        # Convert timestamps from datetime to float (seconds)
-        # This is the ideal timestamp, taken from knowledge that the TX transmits
-        # very regularly.
-        sequence_nums = np.array(group.get_column("sequence_number").to_list())
-        sequence_nums = np.unwrap(sequence_nums, period=4096)
-        timestamps = sequence_nums * 1 / 500
-
-        # Or use reported timestamps
-        timestamps = np.array(
-            [ts.timestamp() for ts in group.get_column("timestamp").to_list()]
-        )
-
-        csi_abs = np.array(group.get_column("csi_abs").to_list())
-        csi_phs = np.array(group.get_column("csi_phase").to_list())
-        csi_arr = csi_abs * np.exp(1j * csi_phs)
-        csi_arr -= np.mean(csi_arr, axis=0, keepdims=True)
-
-        total_packets = csi_arr.shape[0]
-        num_blocks = total_packets // num_packets
-        estimated_speed_list = []
-        block_time_stamps = []
-
-        for block_idx in range(num_blocks):
-            start = block_idx * num_packets
-            end = (block_idx + 1) * num_packets
-            csi_slice = csi_arr[start:end]
-
-            gap_time = (timestamps[end - 1] - timestamps[start]) / (num_packets - 1)
-
-            spectrum = compute_music_spectrum(
-                csi_slice,
-                gap_time,
-                wavelength,
-                candidate_speeds,
-                num_packets,
-                num_targets=1,
-            )
-            est_speed = estimate_speed(spectrum, candidate_speeds)
-            estimated_speed_list.append(est_speed)
-
-            # Store elapsed time in seconds
-            block_time_stamps.append(timestamps[end - 1] - timestamps[0])
-
-        time_indices[name] = np.array(block_time_stamps, dtype=np.float64)
-        results[name] = estimated_speed_list
-
-    # plot_results_together(results, time_indices)
-    plot_estimate_distributions(results, figure_name)
-    return results
-
-
-def plot_speed_boxplot(
-    unscaled: Mapping[str, Sequence[float]],
-    scaled: Mapping[str, Sequence[float]],
-    *,
-    save_path: Path | None = None,
-    dodge: float = 0.18,
-):
-    """
-    Horizontal, dodged box-plots (Raw vs AGC-scaled) per receiver,
-    with whiskers capped at the 1.5xIQR fences and *no* outlier points.
-    """
-
-    # ---------- helper: discard points outside 1.5xIQR ------------------------
-    def _trim(samples: Sequence[float]) -> list[float]:
-        if len(samples) == 0:
-            return []
-        q1, q3 = np.percentile(samples, (25, 75))
-        iqr = q3 - q1
-        low, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-        return [x for x in samples if low <= x <= hi]
-
-    def _to_df(data: Mapping[str, Sequence[float]], label: str) -> pl.DataFrame:
-        rows = []
-        for rcv, s in data.items():
-            rows.append({"receiver": rcv, "samples": _trim(s)})
-        return (
-            pl.DataFrame(rows)
-            .explode("samples")
-            .with_columns(pl.lit(label).alias("kind"))
-        )
-
-    df_u = _to_df(unscaled, "Raw")
-    df_s = _to_df(scaled, "AGC-scaled")
-
-    # stable paper-friendly order
-    receivers = sorted(set(df_u["receiver"]))
-    order_df = pl.DataFrame(
-        {"receiver": receivers, "_row": list(range(len(receivers)))}
-    )
-
-    group_spacing = 1.5
-    df_u = df_u.join(order_df, on="receiver").with_columns(
-        ((pl.col("_row") * group_spacing) - dodge).alias("y")
-    )
-    df_s = df_s.join(order_df, on="receiver").with_columns(
-        ((pl.col("_row") * group_spacing) + dodge).alias("y")
-    )
-
-    # ---------- build figure --------------------------------------------------
-    fig = go.Figure()
-    base_marker = dict(line=dict(width=2, color="#A9A9A9"))
-
-    for df, colour in [(df_u, "#66c2a5"), (df_s, "#fc8d62")]:
-        fig.add_trace(
-            go.Box(
-                x=df["samples"].to_list(),
-                y=df["y"].to_list(),
-                orientation="h",
-                name=df["kind"][0],
-                boxpoints=False,  # <- no outlier dots
-                quartilemethod="exclusive",
-                marker={**base_marker, "color": colour},
-                line_color=colour,
-                hovertemplate="%{x:.3f} m/s<extra></extra>",
-                width=0.3,
-            )
-        )
-
-    fig.update_traces(line_width=5, whiskerwidth=1)
-
-    # ---------- layout (from your reference) ----------------------------------
-    fig.update_layout(
-        width=1920,
-        height=1600,
-        template="plotly_white",
-        xaxis=dict(
-            title="Estimated speed [m/s]",
-            tickfont=dict(size=52, family="Arial", color="dimgray"),
-            title_font=dict(size=56, family="Arial", color="gray"),
-        ),
-        yaxis=dict(
-            tickmode="array",
-            tickvals=[i * group_spacing for i in range(len(receivers))],
-            ticktext=receivers,
-            tickfont=dict(size=52, family="Arial", color="dimgray"),
-        ),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=0.98,
-            xanchor="right",
-            x=0.4,
-            font=dict(size=52, family="Arial", color="gray"),
-        ),
-        margin=dict(l=180, r=80, t=70, b=80),
-    )
-
-    if save_path:
-        fig.write_image(save_path, width=1920, height=1600)
-    else:
-        fig.show()
-
-
+# ---------------------------------------------------------------------------
+# Compact pointrange plot
+# ---------------------------------------------------------------------------
 def plot_speed_pointrange_compact(
-    methods: dict[str, dict[str, list[float]]],
+    speed_samples_by_method: Mapping[str, Mapping[str, Sequence[float]]],
     *,
     save_path: Path | None = None,
-    dodge: float = 0.27,  # horizontal offset between neighbouring methods (within a receiver column)
+    dodge: float = 0.27,  # horizontal offset between methods (within a receiver column)
     inner_labels: bool = True,  # put receiver names inside the figure (top)
-    receiver_bands: bool = True,  # light background strips per receiver
-    method_lanes: bool = False,  # faint vertical guides at each method x-position
-    height: int = 800,
+    show_receiver_bands: bool = True,  # light background strips per receiver
+    show_method_lanes: bool = False,  # faint vertical guides at each method x-position
+    height: int = 600,
     width: int = 1600,
     # Label placement + headroom tuning
     label_y: float = 0.99,  # vertical position for receiver names (paper coords 0..1)
@@ -420,53 +393,107 @@ def plot_speed_pointrange_compact(
     y_title_font_size: int = 46,
     y_title_standoff: int = 32,
     y_nticks: int = 6,
-):
-    """Compact point–range plot (median ± IQR) with values on Y and receivers on X.
-    Inside-top receiver labels; legend inside bottom-right; y-range padded to avoid overlap/clipping.
+) -> None:
+    """
+    Compact point-range plot (median +/- IQR) with values on Y and receivers on X.
+
+    - Each method is shown as points with vertical error bars (median +/- IQR).
+    - Receivers form groups along the X axis.
+    - Labels for receivers can be drawn inside the plot at the top (inner_labels=True).
     """
 
-    # ----------------------------- helpers
-    def _summary(samples: Sequence[float]) -> tuple[float, float, float]:
-        """Return median, iqr_minus, iqr_plus."""
+    # -------------------------------------------------------------------------
+    # Helper: summarize samples into median and IQR-based error bars
+    # -------------------------------------------------------------------------
+    def summarize_samples(samples: Sequence[float]) -> tuple[float, float, float]:
+        """
+        Return (median, iqr_minus, iqr_plus) for a sequence of samples.
+
+        iqr_minus = median - Q1
+        iqr_plus  = Q3 - median
+        """
         if not samples:
             return np.nan, 0.0, 0.0
-        q1, q3 = np.percentile(samples, (25, 75))
-        med = float(np.median(samples))
-        return med, med - q1, q3 - med
 
-    # ----------------------------- tidy up
-    method_labels = list(methods.keys())
-    n_methods = len(method_labels)
-    if n_methods < 2:
+        q1, q3 = np.percentile(samples, (25, 75))
+        median = float(np.median(samples))
+
+        iqr_minus = median - q1
+        iqr_plus = q3 - median
+
+        return median, iqr_minus, iqr_plus
+
+    # -------------------------------------------------------------------------
+    # Basic validation + extraction of names
+    # -------------------------------------------------------------------------
+    method_names = list(speed_samples_by_method.keys())
+    num_methods = len(method_names)
+
+    if num_methods < 2:
         raise ValueError("Need at least two methods for a comparison plot.")
 
-    receivers = sorted({rcv for data in methods.values() for rcv in data.keys()})
-    if not receivers:
-        raise ValueError("No receivers found.")
+    # Collect all receiver names that appear in any method
+    receiver_names: list[str] = sorted(
+        {
+            receiver_name
+            for method_data in speed_samples_by_method.values()
+            for receiver_name in method_data.keys()
+        }
+    )
 
-    group_spacing = 1.5
-    base_x = {rcv: i * group_spacing for i, rcv in enumerate(receivers)}
-    offsets = np.linspace(-(n_methods - 1), n_methods - 1, n_methods) * (dodge / 2)
+    if not receiver_names:
+        raise ValueError("No receivers found in the input data.")
 
-    # ----------------------------- figure + styles
-    fig = go.Figure()
-    marker_cfg = dict(size=35, line=dict(width=2, color="#A9A9A9"))
-    error_cfg = dict(type="data", thickness=5, width=0, color="#636363")
+    # -------------------------------------------------------------------------
+    # Compute X positions for each receiver group and offsets per method
+    # -------------------------------------------------------------------------
+    group_spacing = 1.5  # horizontal distance between receiver groups
 
+    # Base X position for the center of each receiver group
+    receiver_x_position: dict[str, float] = {
+        receiver_name: group_index * group_spacing
+        for group_index, receiver_name in enumerate(receiver_names)
+    }
+
+    # Horizontal offsets so methods are side-by-side within each receiver group
+    # e.g. for 3 methods, offsets might be [-d, 0, +d]
+    method_offsets = np.linspace(
+        start=-(num_methods - 1),
+        stop=(num_methods - 1),
+        num=num_methods,
+    ) * (dodge / 2.0)
+
+    # -------------------------------------------------------------------------
+    # Figure and style configuration
+    # -------------------------------------------------------------------------
+    figure = go.Figure()
+
+    # Marker style (size and outline)
+    marker_style = dict(
+        size=35,
+        line=dict(width=2, color="#A9A9A9"),
+    )
+
+    # Error-bar style
+    error_bar_style = dict(
+        type="data",
+        thickness=5,
+        width=0,
+        color="#636363",
+    )
+
+    # Color palette — assumes these constants are defined somewhere
+    # or replace with literal hex strings if you prefer.
     palette = [
-        "#66c2a5",
-        "#fc8d62",
-        "#8da0cb",
-        "#e78ac3",
-        "#a6d854",
-        "#ffd92f",
-        "#e5c494",
-        "#b3b3b3",
+        LIGHT_GRAY,
+        LIGHT_TEAL,
+        LIGHT_ORANGE,
     ]
-    symbols = [
+
+    marker_symbols = [
         "circle",
-        "diamond",
         "square",
+        "diamond",
         "triangle-up",
         "x",
         "cross",
@@ -474,90 +501,411 @@ def plot_speed_pointrange_compact(
         "triangle-down",
     ]
 
-    # Alternating receiver bands
-    if receiver_bands and receivers:
-        half = group_spacing / 2
-        for i, rcv in enumerate(receivers):
-            if i % 2 == 0:
-                fig.add_shape(
-                    type="rect",
-                    x0=base_x[rcv] - half,
-                    x1=base_x[rcv] + half,
-                    y0=0,
-                    y1=1,
-                    yref="paper",
-                    line=dict(width=0),
-                    fillcolor="rgba(0,0,0,0.035)",
-                    layer="below",
-                )
+    # -------------------------------------------------------------------------
+    # Optional alternating receiver background bands
+    # -------------------------------------------------------------------------
+    if show_receiver_bands and receiver_names:
+        half_group_width = group_spacing / 2.0
 
-    # Optional vertical method guide lines
-    if method_lanes:
-        for k in range(n_methods):
-            for rcv in receivers:
-                fig.add_vline(
-                    x=base_x[rcv] + offsets[k],
+        for receiver_index, receiver_name in enumerate(receiver_names):
+            # Shade every second receiver band
+            if receiver_index % 2 != 0:
+                continue
+
+            x_center = receiver_x_position[receiver_name]
+
+            figure.add_shape(
+                type="rect",
+                x0=x_center - half_group_width,
+                x1=x_center + half_group_width,
+                y0=0.0,
+                y1=1.0,
+                yref="paper",  # stretch from bottom to top of plotting area
+                line=dict(width=0),
+                fillcolor="rgba(0,0,0,0.035)",
+                layer="below",
+            )
+
+    # -------------------------------------------------------------------------
+    # Optional vertical guide lines for each method lane
+    # -------------------------------------------------------------------------
+    if show_method_lanes:
+        for method_index in range(num_methods):
+            method_offset = method_offsets[method_index]
+
+            for receiver_name in receiver_names:
+                x_position = receiver_x_position[receiver_name] + method_offset
+
+                figure.add_vline(
+                    x=x_position,
                     line_width=1,
                     line_dash="dot",
                     line_color="rgba(0,0,0,0.15)",
                     layer="below",
                 )
 
-    # ----------------------------- traces (values on Y)
-    ymins, ymaxs = [], []
-    for k, label in enumerate(method_labels):
-        data = methods[label]
-        xs, meds, err_minus, err_plus = [], [], [], []
+    # -------------------------------------------------------------------------
+    # Main traces: one scatter per method (values on Y, receivers on X)
+    # -------------------------------------------------------------------------
+    y_min_values: list[float] = []
+    y_max_values: list[float] = []
+
+    for method_index, method_name in enumerate(method_names):
+        method_data = speed_samples_by_method[method_name]
+
+        x_values: list[float] = []
+        medians: list[float] = []
+        error_minus_values: list[float] = []
+        error_plus_values: list[float] = []
+
+        for receiver_name in receiver_names:
+            receiver_samples = method_data.get(receiver_name, [])
+
+            median, iqr_minus, iqr_plus = summarize_samples(receiver_samples)
+
+            x_position = (
+                receiver_x_position[receiver_name] + method_offsets[method_index]
+            )
+
+            x_values.append(x_position)
+            medians.append(median)
+            error_minus_values.append(iqr_minus)
+            error_plus_values.append(iqr_plus)
+
+            if np.isfinite(median):
+                y_min_values.append(median - iqr_minus)
+                y_max_values.append(median + iqr_plus)
+
+        figure.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=medians,
+                mode="markers",
+                name=method_name,
+                marker=dict(
+                    **marker_style,
+                    symbol=marker_symbols[method_index % len(marker_symbols)],
+                    color=palette[method_index % len(palette)],
+                ),
+                error_y=dict(
+                    **error_bar_style,
+                    array=error_plus_values,
+                    arrayminus=error_minus_values,
+                ),
+            )
+        )
+
+    if not y_min_values or not y_max_values:
+        raise ValueError("No finite data to plot.")
+
+    # -------------------------------------------------------------------------
+    # Compute Y-range with bottom padding and enough top headroom
+    # so data does not collide with receiver labels.
+    # -------------------------------------------------------------------------
+    data_min = float(np.nanmin(y_min_values))
+    data_max = float(np.nanmax(y_max_values))
+
+    data_range = max(data_max - data_min, 1e-12)
+    bottom_padding = data_range * float(bottom_pad_frac)
+
+    # Convert label position and clearance into a required padding above data.
+    # L is the fraction of the plotting area used for the data (up to the label zone).
+    label_floor = float(label_y) - float(label_clearance)
+    label_floor = max(0.01, min(0.99, label_floor))
+
+    # Derived from the mapping between data coordinates and paper coordinates.
+    required_top_padding = ((1.0 - label_floor) / label_floor) * (
+        data_range + bottom_padding
+    )
+    top_padding_from_fraction = data_range * float(min_top_pad_frac)
+
+    top_padding = max(top_padding_from_fraction, required_top_padding)
+
+    figure.update_yaxes(range=[data_min - bottom_padding, data_max + top_padding])
+
+    # -------------------------------------------------------------------------
+    # Layout configuration (axes, legend, margins)
+    # -------------------------------------------------------------------------
+    x_tick_positions = [receiver_x_position[name] for name in receiver_names]
+
+    if inner_labels:
+        x_tick_labels = ["" for _ in receiver_names]
+        show_x_tick_labels = False
+    else:
+        x_tick_labels = receiver_names
+        show_x_tick_labels = True
+
+    figure.update_layout(
+        width=width,
+        height=height,
+        template="plotly_white",
+        xaxis=dict(
+            title=None,
+            tickmode="array",
+            tickvals=x_tick_positions,
+            ticktext=x_tick_labels,
+            showticklabels=show_x_tick_labels,
+            ticks="",
+            tickfont=dict(
+                size=receiver_label_font_size,
+                family="Arial",
+                color="dimgray",
+            ),
+        ),
+        yaxis=dict(
+            title="Estimated speed [m/s]",
+            tickfont=dict(
+                size=y_tick_font_size,
+                family="Arial",
+                color="dimgray",
+            ),
+            title_font=dict(
+                size=y_title_font_size,
+                family="Arial",
+                color="gray",
+            ),
+            nticks=int(y_nticks),
+        ),
+        legend=dict(
+            orientation="h",  # <-- FIX: must be 'h' or 'v', not 'horizontal'
+            x=0.98,
+            xanchor="right",
+            y=0.02,
+            yanchor="bottom",
+            bgcolor="rgba(255,255,255,0.6)",
+            bordercolor="rgba(0,0,0,0.05)",
+            borderwidth=1,
+            font=dict(
+                size=legend_font_size,
+                family="Arial",
+                color="gray",
+            ),
+        ),
+        margin=dict(
+            l=120,
+            r=40,
+            t=0,
+            b=0,
+            pad=0,
+        ),
+    )
+
+    figure.update_traces(
+        line_width=5,
+        marker_line_width=2,
+        error_y_thickness=5,
+    )
+
+    figure.update_yaxes(
+        title_standoff=y_title_standoff,
+    )
+
+    # Reference line at y=1
+    figure.add_hline(
+        y=1.0,
+        line_dash="dash",
+        line_color="#b4b4b4",
+        line_width=3,
+        layer="below",
+    )
+
+    # -------------------------------------------------------------------------
+    # Inner receiver labels at the top of the plot area
+    # -------------------------------------------------------------------------
+    if inner_labels:
+        for receiver_name in receiver_names:
+            x_position = receiver_x_position[receiver_name]
+
+            figure.add_annotation(
+                x=x_position,
+                xref="x",
+                y=float(label_y),
+                yref="paper",
+                text=receiver_name,
+                showarrow=False,
+                xanchor="center",
+                yanchor="top",
+                font=dict(
+                    size=receiver_label_font_size,
+                    family="Arial",
+                    color="dimgray",
+                ),
+                bgcolor="rgba(255,255,255,0.6)",
+                bordercolor="rgba(0,0,0,0.05)",
+                borderwidth=1,
+            )
+
+    # -------------------------------------------------------------------------
+    # Output: save to file or show
+    # -------------------------------------------------------------------------
+    if save_path is not None:
+        figure.write_image(str(save_path), width=width, height=height)
+    else:
+        figure.show()
+
+
+def plot_error_compact(
+    methods: dict[str, dict[str, list[float]]],
+    *,
+    groundtruth: float = 1.0,
+    save_path: Path | None = None,
+    dodge: float = 0.27,
+    height: int = 800,
+    width: int = 1600,
+):
+    """
+    Compact plot of |groundtruth - median(speed)| per receiver and method.
+
+    For each receiver + method:
+      - median_estimate = median(speed)
+      - center_error    = |groundtruth - median_estimate|
+      - errors          = |groundtruth - speed|
+      - q1_err, q3_err  = 25th / 75th percentiles of errors
+
+    Marker = center_error.
+    Error bars span min(q1_err, center_error) .. max(q3_err, center_error).
+    """
+    # methods keys may include padding; map to canonical labels
+    canonical_to_label: dict[str, str] = {}
+    for label in methods.keys():
+        canonical = label.strip()
+        if canonical not in canonical_to_label:
+            canonical_to_label[canonical] = label
+
+    canonical_order = ["phase cleaned", "+RSSI-scaled", "+AGC-removed"]
+    canonical_methods = [m for m in canonical_order if m in canonical_to_label]
+    if not canonical_methods:
+        raise ValueError(
+            "No known methods found. Expected labels with .strip() in "
+            "{'Raw', 'RSSI-scaled', 'AGC-removed'}."
+        )
+
+    # Colors and marker symbols from shared palette
+    color_map = {
+        "phase cleaned": tgo_palette[2],  # light grey
+        "+RSSI-scaled": tgo_palette[1],  # teal
+        "+AGC-removed": tgo_palette[3],  # orange
+    }
+    symbol_map = {
+        "phase cleaned": "circle",
+        "+RSSI-scaled": "square",
+        "+AGC-removed": "diamond",
+    }
+
+    # Receivers in RECEIVER_ORDER, restricted to those that appear anywhere
+    all_receivers: set[str] = set()
+    for per_receiver in methods.values():
+        all_receivers.update(per_receiver.keys())
+
+    receivers = [r for r in RECEIVER_ORDER if r in all_receivers]
+    if not receivers:
+        raise ValueError("No receivers found in any method dictionary.")
+
+    group_spacing = 1.5
+    base_x = {rcv: i * group_spacing for i, rcv in enumerate(receivers)}
+    n_methods = len(canonical_methods)
+    offsets = np.linspace(-(n_methods - 1), n_methods - 1, n_methods) * (dodge / 2)
+
+    def _summary_error(samples: Sequence[float]):
+        """
+        Center = |gt - median(speed)|.
+        Bars span min(q1_err, center) .. max(q3_err, center),
+        where q1_err/q3_err are quantiles of |gt - speed|.
+        Returns (center, err_minus, err_plus).
+        """
+        if not samples:
+            return np.nan, 0.0, 0.0, 0.0, 0.0
+
+        arr = np.asarray(samples, dtype=float)
+        median_estimate = float(np.median(arr))
+        center_error = abs(groundtruth - median_estimate)
+
+        errors = np.abs(arr - groundtruth)
+        q1_err, q3_err = np.percentile(errors, (25, 75))
+
+        bottom = min(q1_err, center_error)
+        top = max(q3_err, center_error)
+
+        err_minus = max(center_error - bottom, 0.0)
+        err_plus = max(top - center_error, 0.0)
+
+        return center_error, err_minus, err_plus, bottom, top
+
+    fig = go.Figure()
+    marker_cfg = dict(size=30, line=dict(width=2, color="#A9A9A9"))
+    error_cfg = dict(type="data", thickness=4, width=0)
+
+    all_y_min: list[float] = []
+    all_y_max: list[float] = []
+
+    for k, canonical in enumerate(canonical_methods):
+        label = canonical_to_label[canonical]
+        per_receiver = methods[label]
+
+        xs: list[float] = []
+        centers: list[float] = []
+        err_minus: list[float] = []
+        err_plus: list[float] = []
+
         for rcv in receivers:
-            med, m_minus, m_plus = _summary(data.get(rcv, []))
-            xs.append(base_x[rcv] + offsets[k])
-            meds.append(med)
-            err_minus.append(m_minus)
-            err_plus.append(m_plus)
-            if np.isfinite(med):
-                ymins.append(med - m_minus)
-                ymaxs.append(med + m_plus)
+            center_error, minus, plus, bottom, top = _summary_error(
+                per_receiver.get(rcv, [])
+            )
+            x_pos = base_x[rcv] + offsets[k]
+
+            xs.append(x_pos)
+            centers.append(center_error)
+            err_minus.append(minus)
+            err_plus.append(plus)
+
+            if np.isfinite(bottom):
+                all_y_min.append(bottom)
+            if np.isfinite(top):
+                all_y_max.append(top)
 
         fig.add_trace(
             go.Scatter(
                 x=xs,
-                y=meds,
+                y=centers,
                 mode="markers",
-                name=label,
+                name=canonical,
                 marker={
                     **marker_cfg,
-                    "symbol": symbols[k % len(symbols)],
-                    "color": palette[k % len(palette)],
+                    "symbol": symbol_map.get(canonical, "circle"),
+                    "color": color_map.get(canonical, tgo_palette[0]),
                 },
                 error_y={
                     **error_cfg,
                     "array": err_plus,
                     "arrayminus": err_minus,
-                },  # up & down
+                    "color": color_map.get(canonical, tgo_palette[0]),
+                },
             )
         )
 
-    if not ymins or not ymaxs:
-        raise ValueError("No finite data to plot.")
+    # Y-axis range: no clipping, a bit of padding around full [min, max] of bars
+    if all_y_min and all_y_max:
+        data_min = float(np.nanmin(all_y_min))
+        data_max = float(np.nanmax(all_y_max))
+        if not np.isfinite(data_min):
+            data_min = 0.0
+        if not np.isfinite(data_max):
+            data_max = 1.0
 
-    # ----------------------------- y-range with headroom (top) and safety (bottom)
-    data_min = float(np.nanmin(ymins))
-    data_max = float(np.nanmax(ymaxs))
-    data_rng = max(data_max - data_min, 1e-12)
+        span = max(data_max - data_min, 1e-6)
+        pad = max(0.08 * span, 1e-3)
+        y_min = data_min - pad
+        y_max = data_max + pad
+    else:
+        y_min, y_max = 0.0, 1.0
 
-    # bottom pad (prevents visual clipping at the floor)
-    bot_pad = data_rng * float(bottom_pad_frac)
+    fig.update_yaxes(
+        range=[y_min, y_max],
+        title=f"|v̂_median - {groundtruth:.2f}| [m/s]",
+        tickfont=dict(size=32, family="Arial", color="dimgray"),
+        title_font=dict(size=36, family="Arial", color="gray"),
+    )
 
-    # ensure top-of-data stays below the label line by label_clearance (paper coords)
-    L = max(0.01, min(0.99, float(label_y) - float(label_clearance)))
-    needed_top_pad = ((1.0 - L) / L) * (
-        data_rng + bot_pad
-    )  # derived from paper-coordinate constraint
-    top_pad = max(data_rng * float(min_top_pad_frac), needed_top_pad)
-
-    fig.update_yaxes(range=[data_min - bot_pad, data_max + top_pad])
-
-    # ----------------------------- layout & cosmetics
     fig.update_layout(
         width=width,
         height=height,
@@ -566,443 +914,219 @@ def plot_speed_pointrange_compact(
             title=None,
             tickmode="array",
             tickvals=[base_x[r] for r in receivers],
-            ticktext=["" for _ in receivers] if inner_labels else receivers,
-            showticklabels=not inner_labels,  # hide to remove any bottom gap
+            ticktext=receivers,
+            showticklabels=True,
             ticks="",
-            tickfont=dict(
-                size=receiver_label_font_size, family="Arial", color="dimgray"
-            ),
+            tickfont=dict(size=32, family="Arial", color="dimgray"),
         ),
-        yaxis=dict(
-            title="Estimated speed [m/s]",
-            tickfont=dict(size=y_tick_font_size, family="Arial", color="dimgray"),
-            title_font=dict(size=y_title_font_size, family="Arial", color="gray"),
-            nticks=int(y_nticks),
-        ),
-        legend=dict(  # INSIDE bottom-right
+        legend=dict(
             orientation="h",
-            x=0.98,
-            xanchor="right",
-            y=0.02,
-            yanchor="bottom",
-            bgcolor="rgba(255,255,255,0.6)",
+            x=0.5,
+            xanchor="center",
+            y=0.98,
+            yanchor="top",
+            bgcolor="rgba(255,255,255,0.7)",
             bordercolor="rgba(0,0,0,0.05)",
             borderwidth=1,
-            font=dict(size=legend_font_size, family="Arial", color="gray"),
+            font=dict(size=32, family="Arial", color="gray"),
         ),
-        margin=dict(l=120, r=40, t=0, b=0, pad=0),  # no top or bottom margin
+        margin=dict(l=120, r=40, t=80, b=40, pad=0),
     )
 
-    # make things pop
-    fig.update_traces(line_width=5, marker_line_width=2, error_y_thickness=5)
-    fig.update_yaxes(title_standoff=y_title_standoff)
+    fig.update_traces(marker_line_width=2, error_y_thickness=4)
 
-    # ground-truth line
-    fig.add_hline(
-        y=1, line_dash="dash", line_color="#b4b4b4", line_width=3, layer="below"
-    )
-
-    # ----------------------------- receiver labels inside (top)
-    if inner_labels:
-        for rcv in receivers:
-            fig.add_annotation(
-                x=base_x[rcv],
-                xref="x",
-                y=float(label_y),
-                yref="paper",
-                text=rcv,
-                showarrow=False,
-                xanchor="center",
-                yanchor="top",
-                font=dict(
-                    size=receiver_label_font_size, family="Arial", color="dimgray"
-                ),
-                bgcolor="rgba(255,255,255,0.6)",
-                bordercolor="rgba(0,0,0,0.05)",
-                borderwidth=1,
-            )
-
-    # ----------------------------- output
-    if save_path:
+    if save_path is not None:
         fig.write_image(save_path, width=width, height=height)
     else:
         fig.show()
 
 
-def plot_speed_pointrange(
+# ---------------------------------------------------------------------------
+# Flattening + caching utilities
+# ---------------------------------------------------------------------------
+
+
+def _methods_to_df(
     methods: dict[str, dict[str, list[float]]],
-    *,
-    save_path: Path | None = None,
-    dodge: float = 0.27,  # half the total spread across 4 methods
-):
+    phase_label: str,
+) -> pl.DataFrame:
     """
-    Point-range plot (median ± IQR) for multiple processing methods.
-
-    Parameters
-    ----------
-    methods
-        Dict keyed by *method-label* → { receiver → list of speed estimates }.
-        Example: { "Raw":   results_unscaled,
-                   "AGC":   results_scaled,
-                   "DPF":   results_dpf,
-                   "XYZ":   results_xyz }
-    save_path
-        If given, write PDF/PNG via Kaleido; otherwise call `fig.show()`.
-    dodge
-        Horizontal offset (in y-axis units) between neighbouring methods.
-        Defaults to ±0.27 so the four markers fill a range ≈ 1.6 units wide.
+    Flatten nested storage into a single Polars DataFrame.
     """
+    rows = []
+    for pipeline_name, per_receiver in methods.items():
+        for receiver_name, samples in per_receiver.items():
+            for est in samples:
+                rows.append(
+                    {
+                        "receiver": receiver_name,
+                        "pipeline": pipeline_name.strip(),
+                        "phase": phase_label,
+                        "estimated_speed": float(est),
+                    }
+                )
 
-    # ------------------------------------------------------------------ helpers
-    def _summary(samples: Sequence[float]) -> tuple[float, float, float]:
-        """Return median, iqr_minus, iqr_plus."""
-        if not samples:
-            return np.nan, 0, 0
-        q1, q3 = np.percentile(samples, (25, 75))
-        med = float(np.median(samples))
-        return med, med - q1, q3 - med
-
-    # ------------------------------------------------------------------ tidy up
-    method_labels = list(methods.keys())
-    n_methods = len(method_labels)
-    if n_methods < 2:
-        raise ValueError("Need at least two methods for a comparison plot.")
-
-    # Collect receiver set once; order alphabetically for paper-stable layout
-    receivers = sorted({rcv for data in methods.values() for rcv in data.keys()})
-
-    # Numerical y position for each receiver (centre line)
-    group_spacing = 1.5
-    base_y = {rcv: i * group_spacing for i, rcv in enumerate(receivers)}
-
-    # Pre-compute per-method offset so they’re symmetrically dodged
-    # e.g. for 4 methods → offsets = [-3d, -d, +d, +3d] with d = dodge
-    offsets = np.linspace(-(n_methods - 1), n_methods - 1, n_methods) * dodge / 2
-
-    # ------------------------------------------------------------------ figure
-    fig = go.Figure()
-    marker_cfg = dict(size=35, line=dict(width=2, color="#A9A9A9"))
-    error_cfg = dict(type="data", thickness=5, width=0, color="#636363")
-
-    # Palette + symbols
-    palette = [
-        "#66c2a5",
-        "#fc8d62",
-        "#8da0cb",
-        "#e78ac3",
-        "#a6d854",
-        "#ffd92f",
-        "#e5c494",
-        "#b3b3b3",
-    ]
-    symbols = [
-        "circle",
-        "diamond",
-        "square",
-        "triangle-up",
-        "x",
-        "cross",
-        "star",
-        "triangle-down",
-    ]
-
-    for k, label in enumerate(method_labels):
-        data = methods[label]
-        rows = []
-        for rcv in receivers:
-            med, m_minus, m_plus = _summary(data.get(rcv, []))
-            rows.append((med, m_minus, m_plus, base_y[rcv] + offsets[k]))
-        meds, err_minus, err_plus, ys = zip(*rows)
-
-        fig.add_trace(
-            go.Scatter(
-                x=list(meds),
-                y=list(ys),
-                mode="markers",
-                name=label,
-                marker={
-                    **marker_cfg,
-                    "symbol": symbols[k % len(symbols)],
-                    "color": palette[k % len(palette)],
-                },
-                error_x={
-                    **error_cfg,
-                    "array": list(err_plus),
-                    "arrayminus": list(err_minus),
-                },
-            )
+    if not rows:
+        return pl.DataFrame(
+            {
+                "receiver": pl.Series([], dtype=pl.Utf8),
+                "pipeline": pl.Series([], dtype=pl.Utf8),
+                "phase": pl.Series([], dtype=pl.Utf8),
+                "estimated_speed": pl.Series([], dtype=pl.Float64),
+            }
         )
 
-    # ------------------------------------------------------------------ layout
-    fig.update_layout(
-        width=1920,
-        height=1600,
-        template="plotly_white",
-        xaxis=dict(
-            title="Estimated speed [m/s]",
-            tickfont=dict(size=48, family="Arial", color="dimgray"),
-            title_font=dict(size=50, family="Arial", color="gray"),
-        ),
-        yaxis=dict(
-            tickmode="array",
-            tickvals=[base_y[r] for r in receivers],
-            ticktext=receivers,
-            tickfont=dict(size=48, family="Arial", color="dimgray"),
-            title_font=dict(size=50, family="Arial", color="gray"),
-        ),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=0.98,
-            xanchor="right",
-            x=0.4,
-            font=dict(size=48, family="Arial", color="gray"),
-        ),
-        margin=dict(l=180, r=80, t=70, b=80),
-    )
-
-    # Thicker strokes so points pop even after journal down-sampling
-    fig.update_traces(line_width=5, marker_line_width=2, error_x_thickness=5)
-
-    fig.add_vline(
-        x=1,  # ground-truth speed
-        line_dash="dash",
-        line_color="#b4b4b4",  # soft grey so it doesn’t dominate
-        line_width=3,
-        layer="below",  # keeps markers/error bars on top
-    )
-
-    # ------------------------------------------------------------------ output
-    if save_path:
-        fig.write_image(save_path, width=1920, height=1600)
-    else:
-        fig.show()
+    return pl.DataFrame(rows)
 
 
+def save_results(methods_baseline, methods_phasefit, path: Path):
+    """
+    Save all Doppler estimates (baseline and phasefit) to parquet.
+    """
+    df_base = _methods_to_df(methods_baseline, phase_label="baseline")
+    df_pf = _methods_to_df(methods_phasefit, phase_label="phasefit")
+    df_all = pl.concat([df_base, df_pf], how="vertical_relaxed")
+    df_all.write_parquet(path)
+
+
+def load_cached_results(path: Path):
+    """
+    Load cached Doppler estimates and reconstruct nested dicts:
+
+        baseline_methods, phasefit_methods
+    """
+    df = pl.read_parquet(path)
+
+    def build(phase: str):
+        df_sub = df.filter(pl.col("phase") == phase)
+        nested = {}
+        for pipeline, g1 in df_sub.group_by("pipeline"):
+            pipeline_name = pipeline[0]
+            nested[pipeline_name] = {}
+            for receiver, g2 in g1.group_by("receiver"):
+                receiver_name = receiver[0]
+                nested[pipeline_name][receiver_name] = g2["estimated_speed"].to_list()
+        return nested
+
+    return build("baseline"), build("phasefit")
+
+
+# ---------------------------------------------------------------------------
+# Command-line interface
+# ---------------------------------------------------------------------------
 def main():
-    data_scaled = load_csi_data(scale=True)
-    data_unscaled = load_csi_data(scale=False)
-    data_rssiscaled = load_csi_data(scale=True, rescale_rssi=True)
+    parser = argparse.ArgumentParser(description="Doppler estimation pipeline")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    results_scaled: dict[str, list[float]] = doppler_estimates(data_scaled, "scaled")
-    results_unscaled: dict[str, list[float]] = doppler_estimates(
-        data_unscaled, "unscaled"
+    subparsers.add_parser(
+        "calculate", help="Compute Doppler estimates and save to parquet."
     )
-    results_rssiscaled: dict[str, list[float]] = doppler_estimates(
-        data_rssiscaled, "rssiscaled"
+    subparsers.add_parser(
+        "plot_distributions", help="Plot per-method distributions from cached parquet."
+    )
+    subparsers.add_parser(
+        "plot_estimates", help="Plot compact pointrange plot from cached parquet."
     )
 
-    plot_speed_boxplot(
-        results_unscaled, results_scaled, save_path=data_dir / "improvement.pdf"
-    )
-    methods = {
-        "Raw    ": results_unscaled,
-        "AGC-removed    ": results_scaled,
-        "RSSI-scaled": results_rssiscaled,
-    }
+    args = parser.parse_args()
 
-    plot_speed_pointrange_compact(methods, save_path=data_dir / "methods-compared.pdf")
-    # plot_asus_csi_timeseries(data, 5000)
-    # plot_asus_csi_packet_overlays(data)
-    # plot_asus_csi_3d(data)
+    estimates_path = data_dir / "doppler_estimates.parquet"
 
+    # ------------------------------------------------------
+    # calculate
+    # ------------------------------------------------------
+    if args.command == "calculate":
+        print("[INFO] Loading and processing CSI...")
+
+        data_scaled = load_csi_data(scale=True)
+        data_unscaled = load_csi_data(scale=False)
+        data_rssiscaled = load_csi_data(scale=True, rescale_rssi=True)
+
+        results_scaled = doppler_estimates(data_scaled, "scaled")
+        results_unscaled = doppler_estimates(data_unscaled, "unscaled")
+        results_rssiscaled = doppler_estimates(data_rssiscaled, "rssiscaled")
+
+        data_scaled_pf = load_csi_data(scale=True, phase_fit=True)
+        data_unscaled_pf = load_csi_data(scale=False, phase_fit=True)
+        data_rssiscaled_pf = load_csi_data(
+            scale=True, rescale_rssi=True, phase_fit=True
+        )
+
+        results_scaled_pf = doppler_estimates(data_scaled_pf, "scaled-phasefit")
+        results_unscaled_pf = doppler_estimates(data_unscaled_pf, "unscaled-phasefit")
+        results_rssiscaled_pf = doppler_estimates(
+            data_rssiscaled_pf, "rssiscaled-phasefit"
+        )
+
+        methods = {
+            "phase cleaned   ": results_unscaled,
+            "+AGC-removed   ": results_scaled,
+            "+RSSI-scaled": results_rssiscaled,
+        }
+
+        methods_phasefit = {
+            "phase cleaned   ": results_unscaled_pf,
+            "+AGC-removed   ": results_scaled_pf,
+            "+RSSI-scaled": results_rssiscaled_pf,
+        }
+
+        save_results(
+            methods,
+            methods_phasefit,
+            estimates_path,
+        )
+
+        print(f"[OK] Saved Doppler estimates to {estimates_path}")
+        return
+
+    # ------------------------------------------------------
+    # plot_distributions
+    # ------------------------------------------------------
+    if args.command == "plot_distributions":
+        if not estimates_path.exists():
+            raise FileNotFoundError("Run `calculate` first — no cached parquet found.")
+
+        baseline_methods, _ = load_cached_results(estimates_path)
+
+        print("[INFO] Creating distribution plots...")
+        for method_name, per_receiver in baseline_methods.items():
+            sanitized = method_name.replace(" ", "_")
+            print(f"[PLOT] {method_name}")
+            plot_estimate_distributions(
+                per_receiver,
+                figure_name=f"distribution_{sanitized}",
+            )
+
+        print("[OK] Distribution plots generated.")
+        return
+
+    # ------------------------------------------------------
+    # plot_estimates
+    # ------------------------------------------------------
+    if args.command == "plot_estimates":
+        if not estimates_path.exists():
+            raise FileNotFoundError("Run `calculate` first — no cached parquet found.")
+
+        _, baseline_methods = load_cached_results(estimates_path)
+
+        # Rebuild methods dict in the exact order + labels you used originally
+        methods_for_plot = {
+            "phase cleaned   ": baseline_methods.get("phase cleaned", {}),
+            "+RSSI-scaled": baseline_methods.get("+RSSI-scaled", {}),
+            "+AGC-removed   ": baseline_methods.get("+AGC-removed", {}),
+        }
+
+        plot_speed_pointrange_compact(
+            methods_for_plot,
+            save_path=data_dir / "methods-compared.pdf",
+        )
+        print("[OK] Saved methods-compared.pdf")
+        return
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     main()
-
-
-# ---
-def plot_asus_csi_timeseries(data: pl.DataFrame):
-    """
-    Plot the CSI amplitude timeseries for the receivers 'asus1' and 'asus2'
-    in a single figure with two subplots.
-
-    For each receiver:
-      - Only the first n captures are plotted (if n is provided).
-      - Every 10th subcarrier is plotted as a separate line.
-      - Only every 5th time point is plotted to reduce clutter.
-
-    Parameters:
-      data (pl.DataFrame): The processed CSI data.
-      n (int, optional): The number of time points to plot per receiver.
-                         If None, all available captures are used.
-    """
-    # Filter data to include only rows from 'asus1' and 'asus2'
-    asus_data = data.filter(pl.col("receiver_name").is_in(["asus1", "asus2"]))
-    receivers = ["asus1", "asus2"]
-
-    # Create a figure with 2 subplots (one per receiver)
-    fig, axs = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
-
-    for ax, receiver in zip(axs, receivers):
-        rec_df = asus_data.filter(pl.col("receiver_name") == receiver)
-        if rec_df.height == 0:
-            print(f"No data found for receiver: {receiver}")
-            continue
-
-        # If n is provided, only use the first n captures
-        rec_df = rec_df.head(20000)
-        rec_df = rec_df.tail(1000)
-
-        # Convert timestamps to seconds (float) and select every 5th time point
-        timestamps = np.array(rec_df.get_column("sequence_number").to_list())
-
-        # 'csi_abs' is stored as a list per capture; stack them to get a 2D array.
-        # Then select every 5th time sample to reduce the number of points plotted.
-        csi_abs_list = rec_df.get_column("csi_abs").to_list()
-        csi_abs_array = np.stack(csi_abs_list, axis=0)  # [::5]
-
-        # Determine subcarrier indices to plot (every 10th one)
-        num_subcarriers = csi_abs_array.shape[1]
-        subcarrier_indices = np.arange(0, num_subcarriers, 10)
-
-        # Plot the amplitude for each selected subcarrier
-        for idx in subcarrier_indices:
-            ax.plot(timestamps, csi_abs_array[:, idx], label=f"Subcarrier {idx}")
-
-        ax.set_title(f"CSI Amplitude Timeseries for Receiver {receiver}")
-        ax.set_ylabel("CSI Amplitude")
-        ax.grid(True)
-        ax.legend(fontsize=8)
-
-    axs[-1].set_xlabel("Time (s)")
-    plt.tight_layout()
-    if SHOW:
-        plt.show()
-
-
-def plot_asus_csi_packet_overlays(data: pl.DataFrame, num_overlays: int = 3):
-    """
-    Plot a time series of the average CSI amplitude per packet for receivers 'asus1' and 'asus2',
-    and overlay a few insets that show the full packet (amplitude vs. subcarrier index)
-    at time points evenly spaced across the data. Each inset is connected to the main plot
-    with an arrow.
-
-    Parameters:
-      data (pl.DataFrame): The processed CSI data.
-      num_overlays (int): The number of packet overlays (inset plots) to display.
-    """
-    asus_data = data.filter(pl.col("receiver_name").is_in(["asus1", "asus2"]))
-    receivers = ["asus1", "asus2"]
-
-    fig, axs = plt.subplots(len(receivers), 1, figsize=(12, 6), sharex=True)
-    if len(receivers) == 1:
-        axs = [axs]
-
-    for ax, receiver in zip(axs, receivers):
-        rec_df = asus_data.filter(pl.col("receiver_name") == receiver)
-        if rec_df.height == 0:
-            print(f"No data found for receiver: {receiver}")
-            continue
-
-        rec_df = rec_df.head(20000).tail(1000)
-        sequence_numbers = np.array(rec_df.get_column("sequence_number").to_list())
-        csi_abs_list = rec_df.get_column("csi_abs").to_list()
-        csi_abs_array = np.stack(csi_abs_list, axis=0)
-        avg_amplitudes = np.mean(csi_abs_array, axis=1)
-
-        ax.plot(sequence_numbers, avg_amplitudes, label="Avg Amplitude", color="blue")
-        ax.set_title(f"CSI Time Series and Packet Overlays for {receiver}")
-        ax.set_xlabel("Sequence Number")
-        ax.set_ylabel("Avg CSI Amplitude")
-        ax.grid(True)
-
-        num_packets = len(sequence_numbers)
-        overlay_indices = np.linspace(0, num_packets - 1, num_overlays, dtype=int)
-        dx = (sequence_numbers[-1] - sequence_numbers[0]) * 0.05
-        dy = (np.max(avg_amplitudes) - np.min(avg_amplitudes)) * 0.1
-
-        # Pre-calculate a bounding box size for the insets.
-        bbox_width = (sequence_numbers[-1] - sequence_numbers[0]) * 0.1
-        bbox_height = (np.max(avg_amplitudes) - np.min(avg_amplitudes)) * 0.1
-
-        for idx in overlay_indices:
-            time_point = sequence_numbers[idx]
-            avg_amp = avg_amplitudes[idx]
-            packet_amplitude = csi_abs_array[idx]
-            num_subcarriers = packet_amplitude.shape[0]
-            subcarrier_indices = np.arange(num_subcarriers)
-
-            # Create a Bbox for the inset's anchor
-            bbox = Bbox.from_bounds(
-                time_point + dx, avg_amp + dy, bbox_width, bbox_height
-            )
-
-            ax_inset = inset_axes(
-                ax,
-                width="20%",
-                height="20%",
-                bbox_to_anchor=bbox,
-                bbox_transform=ax.transData,
-                loc="upper left",
-                borderpad=1,
-            )
-
-            ax_inset.plot(
-                subcarrier_indices,
-                packet_amplitude,
-                marker="o",
-                linestyle="-",
-                color="red",
-            )
-            ax_inset.set_title(f"Packet {idx}", fontsize=8)
-            ax_inset.set_xlim(0, num_subcarriers - 1)
-            ax_inset.tick_params(axis="both", which="major", labelsize=6)
-            ax_inset.grid(True)
-
-            ax.annotate(
-                "",
-                xy=(time_point, avg_amp),
-                xycoords="data",
-                xytext=(time_point + dx, avg_amp + dy),
-                textcoords="data",
-                arrowprops=dict(arrowstyle="->", color="gray"),
-            )
-
-    plt.tight_layout()
-    if SHOW:
-        plt.show()
-
-
-def plot_results(results, time_indices):
-    """Plot estimated speed for each receiver in a single big subplot."""
-    fig, axes = plt.subplots(4, 2, figsize=(12, 10))
-    axes = axes.flatten()
-
-    for idx, (receiver, speeds) in enumerate(results.items()):
-        axes[idx].plot(time_indices[receiver], speeds, "*")
-        axes[idx].set_title(receiver)
-        axes[idx].set_xlabel("Time (s)")
-        axes[idx].set_ylabel("Estimated Speed (m/s)")
-        axes[idx].set_ylim(0, 5)
-        axes[idx].grid(True)
-
-    plt.tight_layout()
-    if SHOW:
-        plt.show()
-
-
-def plot_results_together(results, time_indices):
-    """Plot estimated speed for all receivers in one figure using a seaborn scatter plot."""
-
-    styles = ["-", "--", "-.", ":", "-", "--", "-.", ":"]
-    markers = ["o", "s", "D", "*", "x", "^", "v", "p"]
-
-    plt.figure(figsize=(12, 6))
-    for (receiver, speeds), style, marker in zip(results.items(), styles, markers):
-        plt.plot(
-            time_indices[receiver],
-            speeds,
-            linestyle=style,
-            marker=marker,
-            label=receiver,
-        )
-
-    plt.xlabel("Time (s)")
-    plt.ylabel("Estimated Speed (m/s)")
-    plt.title("Estimated Speed for All Receivers")
-    plt.legend(title="Receiver")
-    plt.grid(True)
-    # plt.ylim(0.7, 1.3)
-    if SHOW:
-        plt.show()

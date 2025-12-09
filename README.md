@@ -1,5 +1,8 @@
 # Sensession
 
+Code and data for "Same Signal, Different Story: Demystifying Receiver Effects in Wi-Fi Channel State Information".
+Data and computation results can be found [here](https://doi.org/10.4121/48e1331b-91df-4e1a-906b-b0a0e9d16c74).
+
 A completely over-engineered collection of scripts to run CSI capture experiments
 with receivers operated by multiple tools. Supports:
 
@@ -12,6 +15,7 @@ with receivers operated by multiple tools. Supports:
 - Common CSI processing methods
 - A helper submodule for long-running experiments (Campaigns)
 - Campaign (de-)serialization, allowing to rerun failed parts of campaigns
+- Training scripts to replicate our ML experiments on four models under `har-train-scripts`
 
 ## Initial Setup
 
@@ -84,7 +88,7 @@ General notes for using the routers:
 
 1. Install Matlab together with WLan Toolbox into `matlab_path`
 1. Patch Toolbox using `./matlab/patch_wlan_toolbox.sh $matlab_path`
-1. Set up a venv `python -m venv .venv && source .venv/bin/activate` 
+1. Setup a venv `python venv .venv && source .venv/bin/activate` 
 1. Install python engine `cd $matlab_path/extern/engines/python && pip install .`
 
 #### SDR
@@ -151,7 +155,7 @@ pip install .
 ### lib
 
 The tools can be used programmatically. See the `examples` directory
-for a few examples.
+for a few examples or `experiments` for the experiment campaigns.
 
 ## General Information
 
@@ -172,3 +176,8 @@ CSI in monitor mode from any frames not addressed to the weird magic
 MAC address `00:16:ea:12:34:56`. We provide a dedicated frame config
 `InterleavedIQFrameGroupConfig` to have alternating frames addressed
 to the iwl and the other cards.
+
+## Evaluation
+
+Our evaluation scripts can be found under `./evaluation`. They are to
+be run as modules within the environment where sensession is installed.

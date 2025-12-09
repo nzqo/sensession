@@ -76,7 +76,7 @@ def subsample(
 def prepare_data(
     data_dir: Path,
     num_csi_per_sample_window: int = 800,
-    target_dir: Path = None,
+    target_dir: Path | None = None,
     position: list[int] = [0, 1, 2, 3],
 ):
     """
@@ -89,7 +89,7 @@ def prepare_data(
         logger.error("Please dont write back to original file!")
         exit(1)
 
-    if target_dir == None:
+    if target_dir is None:
         logger.error("Specify a path to store results to")
         exit(1)
 
@@ -129,7 +129,7 @@ def prepare_data(
     csi = csi.join(meta, on="meta_id", how="semi")
 
     # Perform subsampling for every of the captures to ensure matching window sizes
-    logger.trace(f"Performing subsampling ...")
+    logger.trace("Performing subsampling ...")
     csi = subsample(csi, num_csi_per_sample_window)
     offenders = (
         csi.group_by("meta_id")
@@ -146,10 +146,10 @@ def prepare_data(
 
     logger.trace("Done with subsampling")
 
-    logger.trace(f"Writing data back to preprocessed file ...")
+    logger.trace("Writing data back to preprocessed file ...")
     logger.info(f"Final shapes: csi: {csi.shape}, meta: {meta.shape}")
-    csi.write_parquet(target_dir / f"csi.parquet")
-    meta.write_parquet(target_dir / f"meta.parquet")
+    csi.write_parquet(target_dir / "csi.parquet")
+    meta.write_parquet(target_dir / "meta.parquet")
 
 
 if __name__ == "__main__":

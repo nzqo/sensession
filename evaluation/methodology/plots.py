@@ -4,6 +4,7 @@ import polars as pl
 import seaborn as sns
 import matplotlib.pyplot as plt
 from evaluation.common import tgo_cmap
+from matplotlib.ticker import MaxNLocator
 
 from sensession.campaign import CampaignProcessor
 
@@ -114,7 +115,7 @@ def plot_modality(df: pl.DataFrame, modality: str, ylabel: str, output_file: Pat
     ax.set_ylabel(ylabel, fontsize=28)
     ax.tick_params(axis="x", labelrotation=60, labelsize=22)
     ax.tick_params(axis="y", labelsize=22)
-    ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     if modality != "csi_phase":
         ax.set_ylim(-1.1, 1.1)

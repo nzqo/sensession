@@ -8,7 +8,7 @@ implementing tool-specific NIC abstractions.
 from enum import Enum
 from dataclasses import dataclass
 
-from sensession.config import Channel, MacAddr
+from sensession.config import APP_CONFIG, Channel, MacAddr
 from sensession.util.hash import get_hash
 from sensession.util.shell import shell_run
 from sensession.util.remote_access import Command, SshPasswordless
@@ -92,8 +92,9 @@ class NetworkInterfaceCard:
             return
 
         if mode == NetworkInterfaceMode.MONITOR:
+            script_path = APP_CONFIG.script_dir / "monitor_mode.sh"
             monitor_mode_command = Command(
-                "./scripts/monitor_mode.sh "
+                f"{script_path} "
                 + f"{self.config.interface} "
                 + f"{int(channel.center_freq_hz / 1e6)} "
                 + f"{channel.bandwidth.in_mhz()} "
