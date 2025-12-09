@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from sensession.config import APP_CONFIG, Channel
+from sensession.config import Channel
 from sensession.tools.tool import (
     CsiMeta,
     DeviceId,
@@ -120,13 +120,12 @@ class Nexmon(CsiReceiver):
                 + f" -- destination ip    : {device.config.host_ip}\n"
             )
 
-            script_path = APP_CONFIG.script_dir / "nexmon"
-
             self.bg_process.start_process(
                 shell_command=(
-                    f"{script_path}/csi_capture_start.sh {device.config.netcat_port} {tmp_file.path}"
+                    "./scripts/nexmon/csi_capture_start.sh"
+                    + f" {device.config.netcat_port} {tmp_file.path}"
                 ),
-                cleanup_command=f"{script_path}/csi_capture_stop.sh",
+                cleanup_command="./scripts/nexmon/csi_capture_stop.sh",
             )
 
         self.tmp_channel = channel

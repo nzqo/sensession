@@ -303,8 +303,7 @@ class UsrpulseUsrp:
             f"Trimming usrpulse tmp directory to {max_size} bytes to avoid trashing system."
         )
 
-        script_path = APP_CONFIG.script_dir / "trim_tmp.sh"
-        cmd = Command(f"{script_path} {max_size}").script_through_remote(
+        cmd = Command(f"./scripts/trim_tmp.sh {max_size}").script_through_remote(
             SshPasswordless(self.config.ssh_name)
         )
         shell_run(cmd)

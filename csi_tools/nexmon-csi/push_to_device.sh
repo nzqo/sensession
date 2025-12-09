@@ -27,6 +27,30 @@ Example:
 EOF
 }
 
+# Detect which “close-on-EOF” flag this netcat supports
+detect_nc_flag() {
+  local nc_bin
+  nc_bin=$(command -v nc || command -v netcat) || {
+    echo "Error: neither 'nc' nor 'netcat' found" >&2
+    exit 1
+  }
+
+  # GNU/openbsd-nc style
+  if "$nc_bin" -h 2>&1 | grep -q '\-N'; then
+    echo -N
+    return
+  fi
+
+  # macOS/traditional BSD style
+  if "$nc_bin" -h 2>&1 | grep -q '\-c'; then
+    echo -c
+    return
+  fi
+
+  echo "Error: this netcat supports neither -N nor -c" >&2
+  exit 1
+}
+
 # Parse arguments
 addr="$DEFAULT_ADDR"
 host="$DEFAULT_HOST"
@@ -62,6 +86,11 @@ for tool in zip ssh; do
   fi
 done
 
+# Locate netcat and pick the right close-on-EOF flag
+NC_BIN=$(command -v nc || command -v netcat)
+NC_CLOSE_FLAG=$(detect_nc_flag)
+
+
 # Validate input directory
 if [[ ! -d "$input_dir" ]]; then
   echo "Error: Input directory '$input_dir' does not exist." >&2
@@ -89,7 +118,7 @@ echo "transmitting zipped file"
 
 cat "$TMP_FILE" | ssh "$addr" "cat > $REMOTE_TMP"
 
-# Your original SSH block, exactly unchanged
+# SSH connection
 echo "Connecting to remote router via SSH..."
 
 # NOTE: This SHOULD expand on the router. So this warning is irrelevant.

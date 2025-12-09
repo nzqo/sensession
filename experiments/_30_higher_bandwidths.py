@@ -84,7 +84,7 @@ class EightyMhzExperiment:
     Eighty megahertz experiment fixture
     """
 
-    def __init__(self, experiment_name="test_botong", tx_gain: int = 30):
+    def __init__(self, experiment_name="test", tx_gain: int = 30):
         self.experiment_name = experiment_name
         self.frame_reps = 1500
 
@@ -92,7 +92,7 @@ class EightyMhzExperiment:
             name="Intel ax210",
             short_name="ax210",
             interface="wlp3s0",
-            mac_address="7c:50:79:07:b8:e5",
+            mac_address=MacAddr("7c:50:79:07:b8:e5"),
             antenna_idxs=[0],
             stream_idxs=[0],
             phy_path=3,
@@ -128,7 +128,7 @@ class EightyMhzExperiment:
             name="Qualcomm Atheros AR9462",
             short_name="qca",
             interface="wlp3s0",
-            mac_address="70:77:81:69:51:bf",
+            mac_address=MacAddr("70:77:81:69:51:bf"),
             antenna_idxs=[0],
             stream_idxs=[0],
             repo_path="~/Development/csi-modules",
@@ -295,7 +295,7 @@ if __name__ == "__main__":
     ACTIVITY_IDX: int = 4
     POSITION_IDX: int = 1
     REPS: int = 10
-    SUBJECT_NAME: str = "Subject1"
+    SUBJECT_NAME: str = "test"
 
     for i in range(REPS):
         experiment.add_session(

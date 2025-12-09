@@ -91,7 +91,7 @@ def preprocess(db_path: Path, modality: str):
     num_scs = meta.item(0, "bandwidth") // 5 * 16
     offset = num_scs // 2
 
-    # NOTE: We dont modify the first phase because of phase normalization
+    # NOTE: We dont modify the first phase because of phase preprocessing
     if "phase" in modality:
         offset -= 1
 

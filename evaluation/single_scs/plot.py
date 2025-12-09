@@ -215,7 +215,7 @@ def plot_crosstalk_faceted(df: pl.DataFrame, img_dir: Path):
 
     # Create the FacetGrid
     g = sns.FacetGrid(
-        data=df.to_pandas(),
+        data=df,
         col="receiver_name",
         col_wrap=2,
         height=3,
@@ -282,31 +282,10 @@ def plot_sensitivity(df: pl.DataFrame, img_dir: Path):
             `correlation`, `spearman_corr`, and `mutual_info`
     """
     df = df.with_columns(
-        pearson_sensitivity=(-(1 - df["correlation"]).log10()),
-        spearman_sensitivity=(-(1 - df["spearman_corr"]).log10()),
-        slope_sensitivity=1 - ((1 - df["slope"]).abs()),
-        mi_sensitivity=df["mutual_info"],  # <— new line
+        mi_sensitivity=df["mutual_info"],
     )
 
-    subcarrier_barplot(
-        df,
-        y="pearson_sensitivity",
-        ylabel="$Pearson\\ Sensitivity$",
-        file=img_dir / "pearson-sensitivity.pdf",
-    )
-    subcarrier_barplot(
-        df,
-        y="spearman_sensitivity",
-        ylabel=r"$\rho$",
-        file=img_dir / "spearman-sensitivity.pdf",
-    )
-    subcarrier_barplot(
-        df,
-        y="slope_sensitivity",
-        ylabel="$Sensitivity$",
-        file=img_dir / "slope-sensitivity.pdf",
-    )
-    # ---- new plot for MI ----
+    # Plot our sensitivity measure
     subcarrier_barplot(
         df,
         y="mi_sensitivity",
@@ -341,7 +320,7 @@ def main(mode: Mode, exp_t: str):
         valid_iwl_indices = list(range(-28, -1, 2)) + list(range(-1, 28, 2)) + [28]
         edge = 28
 
-    name = "single_phases" if mode == Mode.PHASE else "single_scs"
+    name = "single_phases_results" if mode == Mode.PHASE else "single_scs_results"
     data_dir = Path.cwd() / "data" / name
     img_dir = data_dir / "img" / f"{exp_t}"
     img_dir.mkdir(exist_ok=True, parents=True)
@@ -359,8 +338,8 @@ def main(mode: Mode, exp_t: str):
 
     logger.trace("Read data.")
 
-    plot_linearity(df, img_dir)
-    logger.trace("Finished rsquared plots")
+    # plot_linearity(df, img_dir)
+    # logger.trace("Finished rsquared plots")
 
     plot_sensitivity(df, img_dir)
     logger.trace("Finished sensitivity plots")
@@ -409,7 +388,7 @@ def main(mode: Mode, exp_t: str):
 if __name__ == "__main__":
     logger.remove()
     logger.add(sys.stderr, level="TRACE")
-    exp_t = "ch11"  # "80mhz"
 
-    main(Mode.AMP, exp_t)
-    main(Mode.PHASE, exp_t)
+    for exp_t in ["ch01", "ch06", "ch11", "ch36", "ch40", "ch44", "ch157"]:
+        main(Mode.AMP, exp_t)
+        main(Mode.PHASE, exp_t)

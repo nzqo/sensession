@@ -3,20 +3,19 @@ import math
 from enum import Enum
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import seaborn as sns
 import matplotlib.pyplot as plt
 from loguru import logger
 from matplotlib.lines import Line2D
 from evaluation.common import (
-    RECEIVER_ORDER,  # Ensure receivers appear in this given order
-)
-from evaluation.common import (
     SHOW_PLT,
-    palette,
+    LIGHT_RED,
+    LIGHT_GRAY,
+    LIGHT_TEAL,
+    LIGHT_ORANGE,
+    RECEIVER_ORDER,
 )
-from matplotlib.colors import LinearSegmentedColormap
 
 
 class Mode(Enum):
@@ -56,23 +55,14 @@ def channel_receiver_facet_plot(df: pl.DataFrame, y: str, ylabel: str, file: Pat
 
     # Prepare a color palette for antenna_idx.
     unique_antennas = sorted(plot_df["antenna_idx"].unique())
-    if palette:
-        if isinstance(palette, LinearSegmentedColormap):
-            color_palette = [
-                palette(x) for x in np.linspace(0, 1, len(unique_antennas))
-            ]
-        elif isinstance(palette, (list, tuple)):
-            if len(palette) < len(unique_antennas):
-                color_palette = sns.color_palette("deep", len(unique_antennas))
-            else:
-                color_palette = palette[: len(unique_antennas)]
-        else:
-            try:
-                color_palette = sns.color_palette(palette, len(unique_antennas))
-            except Exception:
-                color_palette = sns.color_palette("deep", len(unique_antennas))
-    else:
-        color_palette = sns.color_palette("deep", len(unique_antennas))
+
+    color_palette = [
+        LIGHT_ORANGE,  # antenna 1
+        LIGHT_GRAY,  # antenna 2
+        LIGHT_TEAL,  # antenna 3
+        LIGHT_RED,  # antenna 0
+    ]
+
     color_map = {ant: col for ant, col in zip(unique_antennas, color_palette)}
 
     # Determine the number of facets (receivers) and compute ncol so that facets are arranged in 2 rows.
@@ -162,7 +152,7 @@ if __name__ == "__main__":
 
     # Define the channels and corresponding file names.
     channels = [1, 6, 11, 36, 40, 44, 157]
-    name = "single_phases" if MODE == Mode.PHASE else "single_scs"
+    name = "single_phases_results" if MODE == Mode.PHASE else "single_scs_results"
     pre = "phase" if MODE == Mode.PHASE else "abs"
 
     data_dir = Path.cwd() / "data" / name
@@ -202,29 +192,29 @@ if __name__ == "__main__":
     logger.trace("Metric transformations computed.")
 
     # Produce facet plots for each metric.
-    channel_receiver_facet_plot(
-        df,
-        y="log_rsquared_diff",
-        ylabel=r"$- \log{(1-R^2)}$",
-        file=img_dir / f"{pre}-linearity.pdf",
-    )
-    logger.trace("Finished facet plot for linearity.")
+    # channel_receiver_facet_plot(
+    #     df,
+    #     y="log_rsquared_diff",
+    #     ylabel=r"$- \log{(1-R^2)}$",
+    #     file=img_dir / f"{pre}-linearity.pdf",
+    # )
+    # logger.trace("Finished facet plot for linearity.")
 
-    channel_receiver_facet_plot(
-        df,
-        y="pearson_sensitivity",
-        ylabel="$Pearson Sensitivity$",
-        file=img_dir / f"{pre}-pearson-sensitivity.pdf",
-    )
-    logger.trace("Finished facet plot for Pearson sensitivity.")
+    # channel_receiver_facet_plot(
+    #     df,
+    #     y="pearson_sensitivity",
+    #     ylabel="$Pearson Sensitivity$",
+    #     file=img_dir / f"{pre}-pearson-sensitivity.pdf",
+    # )
+    # logger.trace("Finished facet plot for Pearson sensitivity.")
 
-    channel_receiver_facet_plot(
-        df,
-        y="spearman_sensitivity",
-        ylabel=r"$\rho$",
-        file=img_dir / f"{pre}-spearman-sensitivity.pdf",
-    )
-    logger.trace("Finished facet plot for Spearman sensitivity.")
+    # channel_receiver_facet_plot(
+    #     df,
+    #     y="spearman_sensitivity",
+    #     ylabel=r"$\rho$",
+    #     file=img_dir / f"{pre}-spearman-sensitivity.pdf",
+    # )
+    # logger.trace("Finished facet plot for Spearman sensitivity.")
 
     channel_receiver_facet_plot(
         df,
@@ -234,13 +224,13 @@ if __name__ == "__main__":
     )
     logger.trace("Finished facet plot for MI sensitivity.")
 
-    channel_receiver_facet_plot(
-        df,
-        y="slope_sensitivity",
-        ylabel="$Sensitivity$ (Slope Sensitivity)",
-        file=img_dir / f"{pre}-slope-sensitivity.pdf",
-    )
-    logger.trace("Finished facet plot for slope sensitivity.")
+    # channel_receiver_facet_plot(
+    #     df,
+    #     y="slope_sensitivity",
+    #     ylabel="$Sensitivity$ (Slope Sensitivity)",
+    #     file=img_dir / f"{pre}-slope-sensitivity.pdf",
+    # )
+    # logger.trace("Finished facet plot for slope sensitivity.")
 
     label = r"$\bar{D}^{phs}_k(H)$" if MODE == Mode.PHASE else r"$\bar{D}^{amp}_k(H)$"
     channel_receiver_facet_plot(

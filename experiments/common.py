@@ -301,7 +301,10 @@ class ExperimentFixture:
         self.iwl_base_frame = get_iwl_frame(rescale_factor)
 
         self.schedules: list[Schedule] = []
-        self.frames = [self.qca_base_frame, self.iwl_base_frame]
+        self.frames: list[InterleavedIQFrameGroupConfig | IQFrameConfig] = [
+            self.qca_base_frame,
+            self.iwl_base_frame,
+        ]
 
         self.gain = gain
         self.if_delay = if_delay

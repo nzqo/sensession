@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from sensession.config import APP_CONFIG, Channel, BaseTransmissionConfig
+from sensession.config import Channel, BaseTransmissionConfig
 from sensession.util.shell import shell_run
 from sensession.util.remote_access import Command, SshPasswordless
 from sensession.util.frame_generation import GeneratedFrameInfo
@@ -135,8 +135,7 @@ class UhdUsrp:
             f"Trimming tmp directory to {max_size} bytes to avoid trashing system."
         )
 
-        script_path = APP_CONFIG.script_dir / "trim_tmp.sh"
-        cmd = Command(f"{script_path} {max_size}").script_through_remote(
+        cmd = Command(f"./scripts/trim_tmp.sh {max_size}").script_through_remote(
             self.config.access
         )
         shell_run(cmd)

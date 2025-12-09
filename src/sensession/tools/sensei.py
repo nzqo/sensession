@@ -43,7 +43,7 @@ class Sensei(CsiReceiver):
             raise ImportError("Sensei feature not enabled; Check pyproject.toml")
         super().__init__()
 
-        self.collector = sensei.PyDataCollector()
+        self.collector = sensei.PyDataCollector()  # type: ignore
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self.data_queues: dict[str, tuple[str, Queue]] = {}

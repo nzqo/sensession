@@ -33,6 +33,16 @@ from sensession.util.hash import get_hash
 from sensession.csi_file_parser import antenna_idxs_to_bitmask
 
 
+def assert_sensei_available():
+    """
+    Assert sensei submodule is present and available
+    """
+    if not SENSEI_AVAILABLE:
+        raise ImportError(
+            "Sensei not installed! Install the submodule (csi_tools/sensei/py_binding)"
+        )
+
+
 @dataclass
 class SenseiNic:
     """
@@ -46,7 +56,10 @@ class SenseiNic:
         """
         Convert to sensei source type
         """
-        return SourceType.Iwl(scale_csi=self.scale_csi)
+        if not SENSEI_AVAILABLE:
+            raise ImportError("")
+        assert_sensei_available()
+        return SourceType.Iwl(scale_csi=self.scale_csi)  # type: ignore
 
 
 class ServerConnectionType(Enum):
@@ -63,11 +76,13 @@ class ServerConnectionType(Enum):
         """
         Convert to sensei connection type
         """
+        assert_sensei_available()
+
         match self:
             case ServerConnectionType.TCP:
-                return ConnectionType.Tcp
+                return ConnectionType.Tcp  # type: ignore
             case ServerConnectionType.WEB:
-                return ConnectionType.Web
+                return ConnectionType.Web  # type: ignore
             case _:
                 raise ValueError(f"Unknown connection type: {self}")
 
@@ -82,7 +97,8 @@ class SenseiNexmon:
         """
         Convert to sensei source type
         """
-        return SourceType.Nexmon()
+        assert_sensei_available()
+        return SourceType.Nexmon()  # type: ignore
 
 
 # fmt: off
@@ -94,7 +110,7 @@ class SenseiRemoteConfig:
     short_name         : str                  # Unique name for this source
     name               : str                  # Long descriptive device name
     remote_resource_id : str                  # The name given to the source at the remote
-    addr               : IPv4Address          # Addr of the remote hosting the source
+    addr               : IPv4Address | str    # Addr of the remote hosting the source
     port               : int                  # Port under which remote is reachable
     connection_type    : ServerConnectionType # Type of connection to the remote
     antenna_idxs       : list[int]            # Antennas to be used for captures
@@ -125,10 +141,7 @@ class SenseiDevice:  # pylint: disable=too-few-public-methods
     """
 
     def __init__(self, config: SenseiRemoteConfig):
-        if not SENSEI_AVAILABLE:
-            raise ModuleNotFoundError(
-                "Sensei not installed; Can't create a Sensei device."
-            )
+        assert_sensei_available()
 
         self.config = config
 

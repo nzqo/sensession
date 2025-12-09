@@ -476,6 +476,92 @@ class CsiProcessor:
 
         return self
 
+    def detrend_phase_ls(
+        self,
+        column_alias: str = "csi_phase",
+        is_sorted: bool = True,
+    ) -> Self:
+        """
+        Detrend phases by removing a per-stream least-squares linear fit.
+
+        For each CSI stream (grouped by ``self.stream_index``), we fit
+
+            phase_hat = mean_phase + slope * (subcarrier_idxs - mean_sc)
+
+        with ordinary least squares (minimizing sum of squared residuals) and subtract
+        this fitted line from the original phase.
+
+        Args:
+            column_alias: Name for the resulting detrended phase column.
+            is_sorted: Whether CSI is already sorted along the subcarrier dimension.
+
+        Returns:
+            Self: with an extra column ``column_alias`` containing the detrended phase.
+        """
+        self._ensure_unwrapped()
+
+        logger.info(
+            "Detrending phase (OLS) -- subtracting least-squares linear fit over subcarriers"
+        )
+
+        # Sorting is not required for OLS, but we keep the option for consistency.
+        if not is_sorted:
+            self.csi = self.csi.select(
+                pl.all().sort_by("subcarrier_idxs").over(self.stream_index)
+            )
+
+        # Per-stream statistics needed for OLS:
+        #   mean_sc       = E[x]
+        #   mean_phase    = E[y]
+        #   mean_sc2      = E[x^2]
+        #   mean_sc_phase = E[x*y]
+        #   slope         = (E[xy] - E[x]E[y]) / (E[x^2] - E[x]^2)
+        #
+        # Constant subcarrier indices => denom = 0 => slope = 0 (pure offset).
+        stats = (
+            self.csi.group_by(self.stream_index, maintain_order=True)
+            .agg(
+                mean_sc=pl.col("subcarrier_idxs").mean(),
+                mean_phase=pl.col("csi_phase").mean(),
+                mean_sc2=(pl.col("subcarrier_idxs") ** 2).mean(),
+                mean_sc_phase=(pl.col("subcarrier_idxs") * pl.col("csi_phase")).mean(),
+            )
+            .with_columns(
+                denom=pl.col("mean_sc2") - pl.col("mean_sc") ** 2,
+            )
+            .with_columns(
+                phase_slope=pl.when(pl.col("denom") != 0)
+                .then(
+                    (pl.col("mean_sc_phase") - pl.col("mean_sc") * pl.col("mean_phase"))
+                    / pl.col("denom")
+                )
+                .otherwise(0.0),
+            )
+            .select(self.stream_index, "phase_slope", "mean_sc", "mean_phase")
+        )
+
+        # Subtract the fitted line:
+        #   detrended = phase - (mean_phase + slope * (sc - mean_sc))
+        df = self.csi.select(self.stream_index, "subcarrier_idxs", "csi_phase")
+        df = df.join(stats, on=self.stream_index, maintain_order="left").drop(
+            self.stream_index
+        )
+        df = df.with_columns(
+            (
+                pl.col("csi_phase")
+                - (
+                    pl.col("mean_phase")
+                    + pl.col("phase_slope")
+                    * (pl.col("subcarrier_idxs") - pl.col("mean_sc"))
+                )
+            ).alias(column_alias)
+        )
+
+        # Write detrended phase back to original df
+        self.csi = self.csi.with_columns(df.get_column(column_alias))
+
+        return self
+
     def remove_edge_subcarriers(self, num: int = 1) -> Self:
         """
         Remove edge subcarriers.
