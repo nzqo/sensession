@@ -181,3 +181,8 @@ to the iwl and the other cards.
 
 Our evaluation scripts can be found under `./evaluation`. They are to
 be run as modules within the environment where sensession is installed.
+For example:
+
+```bash
+python -m evaluation.tof.compute --help
+```
