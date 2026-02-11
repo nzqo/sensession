@@ -20,7 +20,8 @@ with receivers operated by multiple tools. Supports:
 ## Initial Setup
 
 Before being able to use the things in this repo, some things have to be set up.
-If you are not using a Nexmon device, you should not need to install Nexmon, for example.
+Install what you aim to use: No need to go through Nexmon installation if you only
+plan on using ESP32s, for example.
 
 ### CSI Tools
 
@@ -50,7 +51,7 @@ Some installation hints:
 1. If you have PicoScenes license, put it in `csi_tools/picoscenes-key.txt`
 1. Check `sudo iw dev` for wdev interfaces and delete if present (confuses PicoScenes)
 1. For now, you need to manually set the monitor mode using `array_prepare_for_picoscenes`.
-With recent updates, the basic monitor script doesn't do it for the tool anymore..
+With recent updates, the basic monitor script doesn't do it for the tool anymore.
 1. Install Picoscenes Toolbox `cd csi_tools/PicoscenesToolbox && pip install -e .`
 
 #### Nexmon
@@ -88,23 +89,13 @@ General notes for using the routers:
 
 1. Install Matlab together with WLan Toolbox into `matlab_path`
 1. Patch Toolbox using `./matlab/patch_wlan_toolbox.sh $matlab_path`
-1. Setup a venv `python venv .venv && source .venv/bin/activate` 
+1. Ensure you have a venv active; if not: `python venv .venv && source .venv/bin/activate` 
 1. Install python engine `cd $matlab_path/extern/engines/python && pip install .`
-
-#### SDR
-
-> We recommend using usrpulse (see below) instead of the raw uhd SDR
-
-1. Install uhd
-1. [Calibrate](https://files.ettus.com/manual/page_calibration.html) the SDR
-1. Build custom transmission script and make sure it aligns with path in
-   `scripts/transmit_from_sdr.sh`
-1. For both receival and transmission, follow the usrp performance tips settings
 
 #### ESPion
 
 1. Install `esp-idf` framework
-1. Make sure to use only the `ESP32-S3` model for now, since it is the only non-buggy one
+1. Make sure to use only the `ESP32-S3` model for now. We found others to yield corrupted data occasionally.
 1. Install the appropriate `esp-idf` toolchain
 1. Build and flash the `espion/csilogger` firmware
 1. Give yourself rights to access the serial ports:
@@ -118,14 +109,15 @@ sudo usermod -a -G dialout $USER
 
 #### Usrpulse
 
-This one has to be installed on the machine on which you want to transmit from.
-Just make sure that the daemon is running when you start any sensession collection.
+[Usrpulse](https://github.com/nzqo/usrpulse) is a command server to handle simple
+frame transmission on the SDR. Install it on the machine which has the device attached
+and make sure its running (and is available within the network).
 
 #### Sensei
 
-Sensei abstracts collection from a few different sources. We could either connect
-to a running sensei server instance using TCP/Websockets, or just use the binding
-for python directly. For now, we only do the latter.
+Sensei, similarly to sensession, abstracts collection from a few different sources,
+but efficiently in rust. We use it to capture data from the iwl5300 and nexmon devices
+via the available python binding.
 
 Installation is simple: Make sure you have rust installed, then:
 
@@ -161,7 +153,7 @@ for a few examples or `experiments` for the experiment campaigns.
 
 ### QCA: Sounding Bit and address
 
-The QCA card can not be used to extract CSI when the sounding bit in
+The QCA NIC can not be used to extract CSI when the sounding bit in
 the phy preamble of the wifi frame is not set. Therefore, this card
 requires a separately crafted frame to be sent with the SDR compared
 to the others.
