@@ -1,7 +1,7 @@
 # Sensession
 
 Code and data for "Same Signal, Different Story: Demystifying Receiver Effects in Wi-Fi Channel State Information".
-Data and computation results can be found [here](https://doi.org/10.4121/48e1331b-91df-4e1a-906b-b0a0e9d16c74).
+Data and computation results can be found [here](https://doi.org/10.4121/48e1331b-91df-4e1a-906b-b0a0e9d16c74) and the paper [here](https://doi.org/10.1109/JIOT.2026.3667804).
 
 A completely over-engineered collection of scripts to run CSI capture experiments
 with receivers operated by multiple tools. Supports:
@@ -177,4 +177,19 @@ For example:
 
 ```bash
 python -m evaluation.tof.compute --help
+```
+
+## Reference this project
+
+```bibtex
+@ARTICLE{samesignal2026,
+  author={Portner, Fabian and Gringoli, Francesco and Hollick, Matthias and Asadi, Arash},
+  journal={IEEE Internet of Things Journal}, 
+  title={Same Signal, Different Story: Demystifying Receiver Effects in Wi-Fi Channel State Information}, 
+  year={2026},
+  volume={},
+  number={},
+  pages={1-1},
+  keywords={Receivers;Sensors;Nonlinear distortion;Wireless fidelity;Hardware;Gain control;OFDM;Symbols;Accuracy;Wireless sensor networks},
+  doi={10.1109/JIOT.2026.3667804}}
 ```
