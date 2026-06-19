@@ -18,7 +18,6 @@ def subsample(
     df: pl.DataFrame,
     target_num: int,
     safe_period_ms: int = 1000,
-    label_col_name: str = "activity_idx",
 ):
     """
     Subsample each of the 700 packet CSI sequences to a target of target_num
@@ -77,7 +76,7 @@ def prepare_data(
     data_dir: Path,
     num_csi_per_sample_window: int = 800,
     target_dir: Path | None = None,
-    position: list[int] = [0, 1, 2, 3],
+    position: list[int] | None = None,  # pylint: disable=unused-argument
 ):
     """
     Prepare data from the raw captured data:
@@ -87,11 +86,11 @@ def prepare_data(
     """
     if data_dir == target_dir:
         logger.error("Please dont write back to original file!")
-        exit(1)
+        sys.exit(1)
 
     if target_dir is None:
         logger.error("Specify a path to store results to")
-        exit(1)
+        sys.exit(1)
 
     logger.trace(f"Reading data from {data_dir}")
     target_dir.mkdir(exist_ok=True, parents=True)

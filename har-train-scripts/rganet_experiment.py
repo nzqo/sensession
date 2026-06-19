@@ -299,7 +299,7 @@ def _run_cross_receiver_collect_records(
 
     csi_frame, meta_frame = load_parquet_dataset(dataset_path)
     receiver_names = get_receiver_names(meta_frame)
-    num_classes = int(meta_frame["activity_idx"].max()) + 1
+    num_classes = int(meta_frame["activity_idx"].max()) + 1  # type: ignore[arg-type]
 
     records: list[dict] = []
 
@@ -508,7 +508,7 @@ def run_experiment_kfold_rganet(
 
     csi_frame, meta_frame = load_parquet_dataset(dataset_path)
     receiver_names = get_receiver_names(meta_frame)
-    num_classes = int(meta_frame["activity_idx"].max()) + 1
+    num_classes = int(meta_frame["activity_idx"].max()) + 1  # type: ignore[arg-type]
 
     # stratify on capture-level activity labels
     meta_per_capture_frame = (

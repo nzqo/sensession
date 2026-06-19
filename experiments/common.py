@@ -510,7 +510,7 @@ class ExperimentFixture80MHz:
         )
 
         self.schedules: list[Schedule] = []
-        self.frames = []
+        self.frames: list = []
 
         self.gain = gain
         self.if_delay = if_delay

@@ -25,7 +25,7 @@ from sensession.tools import (
 )
 from sensession.config import APP_CONFIG, FrameId
 from sensession.devices import DeviceId, DeviceConfigType
-from sensession.database import Database
+from sensession.database import DatabaseProtocol
 from sensession.util.exceptions import (
     MatlabError,
     NoDataError,
@@ -580,7 +580,7 @@ class CampaignRunner:
         check_results_and_log(data, event)
         return CollectionResult(event.collection_name, data)
 
-    def store_results(self, database: Database):
+    def store_results(self, database: DatabaseProtocol):
         """
         Persist data in database.
         """

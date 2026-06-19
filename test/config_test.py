@@ -55,4 +55,4 @@ def test_base_frame_config_generation():
     assert triv_cfg.bssid_address is None
     assert triv_cfg.receiver_address is None
     assert triv_cfg.transmitter_address is None
-    assert triv_cfg.bandwidth.value == 20
+    assert triv_cfg.bandwidth.value == 20  # type: ignore[attr-defined]

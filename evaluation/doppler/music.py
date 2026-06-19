@@ -999,7 +999,7 @@ def load_cached_results(path: Path):
 
     def build(phase: str):
         df_sub = df.filter(pl.col("phase") == phase)
-        nested = {}
+        nested: dict = {}
         for pipeline, g1 in df_sub.group_by("pipeline"):
             pipeline_name = pipeline[0]
             nested[pipeline_name] = {}

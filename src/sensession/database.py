@@ -1,7 +1,10 @@
 """
 Database implementation
 
-We use polars LazyFrames as "database", persisting them into parquet files
+We use polars LazyFrames as "database", persisting them into parquet files.
+An alternative NPY backend is available via `NpyDatabase` for faster I/O on
+large files; use `open_store` as a factory that can also auto-detect the backend
+from an existing directory layout.
 """
 
 # see sensession.processing.processor
@@ -10,7 +13,8 @@ from __future__ import annotations
 
 import json
 import traceback
-from typing import Type
+from enum import Enum
+from typing import Self, Type, Protocol, runtime_checkable
 from pathlib import Path
 from datetime import datetime
 
@@ -25,10 +29,26 @@ from sensession.tools.tool import (
     DEFAULT_TIMESTAMP_UNIT,
     CsiMeta,
     CsiGroup,
+    CsiDataPoint,
     CaptureResult,
 )
 
 DataFrameType = pl.DataFrame | pl.LazyFrame
+
+
+class StorageBackend(Enum):
+    """
+    Storage backend selection for the database
+
+    Members:
+        PARQUET : Store CSI as a flat parquet file (default, supports lazy evaluation)
+        NPY     : Store CSI as per-session .npz files under a ``csi/`` subdirectory,
+                  keeping complex values intact. Faster for large files.
+    """
+
+    PARQUET = "parquet"
+    NPY = "npy"
+
 
 # fmt: off
 # -------------------------------------------------------------------------------------
@@ -469,3 +489,267 @@ class Database:
             return self.meta.collect()
         assert isinstance(self.meta, pl.DataFrame)
         return self.meta
+
+
+# -------------------------------------------------------------------------------------
+# -- Shared Protocol
+# ------------------
+# Structural protocol that both `Database` and `NpyDatabase` satisfy, allowing
+# callers to accept either backend without branching on the concrete type.
+# -------------------------------------------------------------------------------------
+@runtime_checkable
+class DatabaseProtocol(Protocol):
+    """
+    Structural protocol satisfied by all database backend classes.
+
+    Any class that exposes ``add_data``, ``add_errors``, ``write``, and the
+    context-manager dunder methods is considered a valid backend.
+    """
+
+    def add_data(
+        self, data: CaptureResult, meta_id: str | None = None, **extra_meta
+    ) -> None:
+        """Add a capture result to the store"""
+
+    def add_errors(self, error_list: list) -> None:
+        """Persist a list of error records"""
+
+    def write(self) -> None:
+        """Flush all buffered data to disk"""
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(self, exc_type, exc_value, tb) -> bool: ...
+
+
+# -------------------------------------------------------------------------------------
+# -- NPY Backend
+# --------------
+# Stores complex CSI as per-session .npz files (one per receiver / meta_id pair)
+# inside a ``csi/`` subdirectory. Metadata is kept in the same ``meta.parquet``
+# as the parquet backend so that reading routines can load it uniformly.
+#
+# Directory layout:
+#   <db_path>/
+#     meta.parquet
+#     csi/
+#       <receiver_name>_<meta_id>.npz   (keys: csi, timestamps, sequence_numbers)
+# -------------------------------------------------------------------------------------
+class NpyDatabase:
+    """
+    NPY-backed database that stores complex CSI arrays as .npz files.
+
+    Metadata is written to ``meta.parquet`` (same format as `Database`) so that
+    existing post-processing code can read it without modification.  CSI is stored
+    as one compressed-NumPy archive per (receiver, session) pair, containing:
+
+    * ``csi``              – complex128 array of shape (n_frames, n_ant, n_streams, n_sub)
+    * ``timestamps``       – uint64 array of shape (n_frames,)
+    * ``sequence_numbers`` – uint16 array of shape (n_frames,)
+
+    The presence of the ``csi/`` subdirectory is used by `open_store` to auto-detect
+    that this backend was used when no explicit backend is provided.
+    """
+
+    # Name of the subdirectory that holds per-session .npz files
+    CSI_DIR = "csi"
+
+    def __init__(self, db_path: Path | str, append: bool = True):
+        if isinstance(db_path, str):
+            db_path = Path(db_path)
+
+        self.db_path = db_path
+        self.db_path.mkdir(exist_ok=True, parents=True)
+
+        self._meta_path = self.db_path / "meta.parquet"
+        self._error_path = self.db_path / "errors.csv"
+        self._csi_dir = self.db_path / self.CSI_DIR
+        self._csi_dir.mkdir(exist_ok=True, parents=True)
+
+        self.changed = False
+
+        # fmt: off
+        # In-flight accumulators
+        self._csi_buffer : dict[tuple[str, str], list[CsiDataPoint]] = {}
+        self._meta_frames: list[pl.DataFrame]                        = []
+        self._errors     : pl.DataFrame                              = pl.DataFrame()
+        # fmt: on
+
+        if append:
+            self._read()
+
+    def __enter__(self) -> NpyDatabase:
+        logger.info("Opening NpyDatabase.")
+        return self
+
+    def __exit__(self, exc_type, exc_value, tb) -> bool:
+        logger.info("Wrapping up NpyDatabase (writing to disk) ...")
+        self.write()
+
+        if exc_type is not None:
+            trace = "".join(traceback.format_exception(exc_type, exc_value, tb))
+            logger.error(f"Encountered exception in NpyDatabase context: {trace}")
+            return False
+
+        return True
+
+    def _read(self):
+        """
+        Reload existing metadata from disk into the accumulator.
+
+        CSI files are left on disk untouched; the buffer starts empty and
+        new writes will add fresh .npz files alongside any existing ones.
+        """
+        if self._meta_path.is_file():
+            self._meta_frames.append(_read_from_disk(self._meta_path, lazy=False))  # type: ignore[arg-type]
+
+        if self._error_path.is_file() and self._error_path.stat().st_size > 10:
+            self._errors = pl.read_csv(self._error_path)
+
+    def write(self):
+        """
+        Flush all in-memory data to disk.
+
+        For each (receiver, meta_id) pair accumulated since the last ``write``
+        call, a new .npz file is created under ``<db_path>/csi/``.  Metadata
+        is concatenated and written (or overwritten) as ``meta.parquet``.
+        """
+        if not self.changed:
+            logger.debug("NpyDatabase hasn't changed; nothing to write.")
+            return
+
+        # -- CSI: one .npz per (receiver_name, meta_id) pair --------------------
+        for (receiver_name, meta_id), points in self._csi_buffer.items():
+            csi = np.stack([p.csi for p in points])
+            timestamps = np.array([p.timestamp for p in points], dtype=np.uint64)
+            seqnums = np.array([p.sequence_num for p in points], dtype=np.uint16)
+
+            fname = f"{receiver_name}_{meta_id}.npz"
+            np.savez(
+                self._csi_dir / fname,
+                csi=csi,
+                timestamps=timestamps,
+                sequence_numbers=seqnums,
+            )
+            logger.debug(f"NpyDatabase: wrote {len(points)} frames → csi/{fname}")
+
+        self._csi_buffer.clear()
+
+        # -- Metadata ------------------------------------------------------------
+        if self._meta_frames:
+            pl.concat(self._meta_frames).write_parquet(self._meta_path)
+            self._meta_frames.clear()
+
+        # -- Errors --------------------------------------------------------------
+        if not self._errors.is_empty():
+            self._errors.write_csv(self._error_path)
+
+        self.changed = False
+
+    def add_data(
+        self, data: CaptureResult, meta_id: str | None = None, **extra_meta
+    ) -> None:
+        """
+        Add a capture result to the in-memory buffer.
+
+        Args:
+            data      : Result from a data capture, including CSI and metadata.
+            meta_id   : Identifier linking CSI to metadata; auto-generated when omitted.
+            extra_meta: Additional metadata columns as ``name=(value, polars_dtype)`` pairs.
+        """
+        if meta_id is None:
+            logger.debug("No `meta_id` provided, generating random one.")
+            meta_id = get_timed_hash(data.receiver_id)
+
+        if not data:
+            logger.debug("No data to add. Ignoring ...")
+            return
+
+        assert data.csi, "Valid data must contain CSI"
+        assert data.meta, "Valid data must have metainfo"
+
+        receiver_name = data.meta.receiver_name
+        key = (receiver_name, meta_id)
+
+        # Accumulate raw data points for later stacking
+        self._csi_buffer.setdefault(key, []).extend(data.csi)
+
+        # Build and accumulate a metadata row
+        meta_df = meta_to_dataframe(data.meta, meta_id=meta_id, lazy=False)  # type: ignore[arg-type]
+        if extra_meta:
+            meta_df = meta_df.with_columns(
+                **{
+                    column: pl.lit(value, dtype=dtype)
+                    for column, (value, dtype) in extra_meta.items()
+                }
+            )
+
+        self._meta_frames.append(meta_df)  # type: ignore[arg-type]
+
+        logger.debug(
+            "Buffering CSI data in NpyDatabase ...\n"
+            + f" -- receiver name.: {receiver_name} (id: {data.receiver_id})\n"
+            + f" -- meta id.......: {meta_id}\n"
+            + f" -- num frames....: {len(data.csi)}\n"
+        )
+
+        self.changed = True
+
+    def add_errors(self, error_list: list) -> None:
+        """
+        Append error records to the error log.
+
+        Args:
+            error_list : List of error dicts to persist alongside the session data.
+        """
+        if not error_list:
+            return
+
+        new_errors = pl.DataFrame(error_list)
+        self._errors = (
+            pl.concat([self._errors, new_errors])
+            if not self._errors.is_empty()
+            else new_errors
+        )
+        self.changed = True
+
+
+# -------------------------------------------------------------------------------------
+# -- Factory
+# ----------
+# -------------------------------------------------------------------------------------
+def open_store(
+    path: Path | str,
+    backend: StorageBackend | None = None,
+    **kwargs,
+) -> Database | NpyDatabase:
+    """
+    Open a database at the given path, returning the appropriate backend instance.
+
+    When ``backend`` is ``None`` the layout of ``path`` is inspected:
+
+    * a ``csi/`` subdirectory → `NpyDatabase`
+    * a ``csi.parquet`` file (or an empty / new directory) → `Database`
+
+    Args:
+        path    : Root directory for the database files.
+        backend : Explicit backend selection; auto-detected when omitted.
+        kwargs  : Forwarded to the chosen backend constructor (e.g. ``append``,
+                  ``lazy``).
+
+    Returns:
+        A `Database` or `NpyDatabase` instance, depending on ``backend``.
+    """
+    if isinstance(path, str):
+        path = Path(path)
+
+    if backend is None:
+        if (path / NpyDatabase.CSI_DIR).is_dir():
+            backend = StorageBackend.NPY
+        else:
+            backend = StorageBackend.PARQUET
+
+    if backend is StorageBackend.NPY:
+        return NpyDatabase(path, **kwargs)
+
+    return Database(path, **kwargs)

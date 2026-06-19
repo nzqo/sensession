@@ -24,7 +24,6 @@ import seaborn as sns
 import plotly.io as pio
 import plotly.express as px
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
 import plotly.graph_objects as go
 from evaluation.common import (
     LIGHT_TEAL,
@@ -33,6 +32,7 @@ from evaluation.common import (
     tgo_palette,
     tgo_cmap_rev,
 )
+from matplotlib.colors import LinearSegmentedColormap
 
 # Disable MathJax in Kaleido's scope to prevent MathJax loading messages
 pio.defaults.mathjax = None

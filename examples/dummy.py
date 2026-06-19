@@ -1,6 +1,7 @@
 """
 Non-trivial Campaign execution example
 """
+# pylint: disable=duplicate-code
 
 from pathlib import Path
 

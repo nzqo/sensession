@@ -62,11 +62,11 @@ def test_frame_group_cfg_type_conversion():
     failure likelihoods.
     """
     addr = "aabbccddeeff"
-    base_cfg = IQFrameConfig(addr, addr, addr, bandwidth=20)
+    base_cfg = IQFrameConfig(addr, addr, addr, bandwidth=20)  # type: ignore[arg-type]
 
     a = IQFrameGroupConfig(
         base_cfg,
-        mask=np.ones((64, 1), dtype=np.complex64),
+        mask=np.ones((64, 1), dtype=np.complex64),  # type: ignore[arg-type]
     )
     assert isinstance(a.base_frame.receiver_address, MacAddr), (
         "Expecting mac address conversion"
@@ -85,7 +85,7 @@ def test_frame_group_cfg_type_conversion():
 
     # Frame config must have Mac Addr as type
     with pytest.raises(TypeError):
-        _ = IQFrameGroupConfig()
+        _ = IQFrameGroupConfig()  # type: ignore[call-arg]
 
 
 def test_invalid_framegroup_init():
@@ -110,10 +110,10 @@ def test_frame_cfg_type_enforcement():
     Test that frame config enforces specified types
     """
     with pytest.raises(ValueError):
-        _ = IQFrameConfig(receiver_address="")
+        _ = IQFrameConfig(receiver_address="")  # type: ignore[arg-type]
 
     with pytest.raises(TypeError):
-        _ = IQFrameConfig(bandwidth=20)
+        _ = IQFrameConfig(bandwidth=20)  # type: ignore[arg-type]
 
 
 def test_trivial_hashes():

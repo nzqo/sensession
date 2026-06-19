@@ -15,7 +15,7 @@ class ViconicConfig:
     """
 
     short_name: str
-    addr: IPv4Address
+    addr: IPv4Address | str
     port: int
 
     def __post_init__(self):

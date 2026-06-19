@@ -80,7 +80,7 @@ class Ath9k(CsiReceiver):
         """
         logger.trace(f"Removing ath9k device {device_id}")
 
-    def _setup_capture(
+    def _setup_capture(  # pylint: disable=too-many-locals
         self,
         devices: list[DeviceId],
         channel: Channel,

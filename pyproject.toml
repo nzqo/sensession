@@ -76,6 +76,7 @@ extension-pkg-allow-list = ["sensei"]
 [tool.mypy]
 ignore_missing_imports = true
 check_untyped_defs = true
+exclude = ["^csi_tools/", "examples/preprocess\\.py"]
 
 # Ruff configuration
 [tool.ruff]

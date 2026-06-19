@@ -7,7 +7,7 @@ from __future__ import annotations
 import shelve
 import hashlib
 from enum import Enum
-from typing import Union
+from typing import Union, TypeVar
 from pathlib import Path
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -26,6 +26,8 @@ from sensession.config import (
 )
 from sensession.util.exceptions import ApiUsageError
 from sensession.util.matlab_parallelizer import Task, MatlabParallelizer
+
+_K = TypeVar("_K")
 
 
 #######################################################################################
@@ -254,8 +256,8 @@ class GeneratedFrameInfo:
 # Frame Cache
 # -------------------------------------------------------------------------------------
 def importance_sorted(
-    frame_dict: dict[str, GeneratedFrameInfo], schedule: list[str] | None = None
-):
+    frame_dict: dict[_K, GeneratedFrameInfo], schedule: list[_K] | None = None
+) -> dict[_K, GeneratedFrameInfo]:
     """
     Sort to dictate which frames are removed first
     We sort by a few criteria:
@@ -283,8 +285,8 @@ def importance_sorted(
 
 
 def select_trim_frames(
-    frame_dict: dict[str, GeneratedFrameInfo], remove_bytes: int
-) -> dict[str, GeneratedFrameInfo]:
+    frame_dict: dict[_K, GeneratedFrameInfo], remove_bytes: int
+) -> dict[_K, GeneratedFrameInfo]:
     """
     Select frames to remove such that at least `remove_bytes` are freed.
 

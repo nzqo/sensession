@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 """
 Example of running a manual sensing session.
 
