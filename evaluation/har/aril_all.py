@@ -24,6 +24,7 @@ import seaborn as sns
 import plotly.io as pio
 import plotly.express as px
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import plotly.graph_objects as go
 from evaluation.common import (
     LIGHT_TEAL,
@@ -34,13 +35,13 @@ from evaluation.common import (
 )
 
 # Disable MathJax in Kaleido's scope to prevent MathJax loading messages
-pio.kaleido.scope.mathjax = None
+pio.defaults.mathjax = None
 
 # ---------------------------------------------------------------------------
 # Global plotting config
 # ---------------------------------------------------------------------------
 PLOT_WIDTH_WIDE = 1920
-PLOT_HEIGHT_SHORT = 700
+PLOT_HEIGHT_SHORT = 660
 PLOT_HEIGHT_MEDIUM = 1150
 PLOT_HEIGHT_TALL = 1600
 
@@ -57,6 +58,9 @@ ERROR_BAR_THICKNESS = 5
 ERROR_BAR_COLOR = "#636363"
 
 HEATMAP_ANNOT_COLOR = "#4f4f4f"
+
+HEATMAP_LOW = "#EE3377"
+HEATMAP_HIGH = "#009988"
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +186,13 @@ def plot_on_device_accuracy_with_std(
         ),
         showlegend=False,
         coloraxis_showscale=False,
-        margin=dict(l=150, r=80, t=0, b=80),
+        margin=dict(l=150, r=80, t=0, b=130),
     )
 
+    figure.update_xaxes(
+        automargin=True,
+        title_standoff=5,  # keep it from being pushed too far down
+    )
     # 4) Save or show
     if save_path:
         figure.write_image(save_path, width=PLOT_WIDTH_WIDE, height=PLOT_HEIGHT_SHORT)
@@ -254,12 +262,23 @@ def plot_cross_device_confusion_heatmap(
     # ---- config ----
     sns.set_theme(style="white", context="paper", font_scale=2)
 
+    # --- transparent figure/axes + custom pink->teal colormap ---
+    plt.rcParams["savefig.transparent"] = True
+    plt.rcParams["figure.facecolor"] = (0, 0, 0, 0)
+    plt.rcParams["axes.facecolor"] = (0, 0, 0, 0)
+
+    heatmap_cmap = LinearSegmentedColormap.from_list(
+        "aril_pink_teal", [HEATMAP_LOW, HEATMAP_HIGH]
+    )
+    LIGHT_GRAY = "#c9c9c9"
+
     heatmap_df = pd.DataFrame(
         confusion_matrix, index=RECEIVER_ORDER, columns=RECEIVER_ORDER
     )
 
     # 1) Create figure
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(10, 10), facecolor=(0, 0, 0, 0))
+    plt.gca().set_facecolor((0, 0, 0, 0))
 
     # 2) Heatmap with annotations
     axis = sns.heatmap(
@@ -268,29 +287,46 @@ def plot_cross_device_confusion_heatmap(
         fmt=".2f",
         vmin=vmin,
         vmax=vmax,
-        cmap=tgo_cmap_rev,
+        cmap=heatmap_cmap,
         square=True,
         cbar_kws={"shrink": 0.725, "label": ""},
-        annot_kws={"size": 18, "weight": "bold", "color": HEATMAP_ANNOT_COLOR},
+        annot_kws={"size": 18, "weight": "bold", "color": "white"},
         linewidths=0,
     )
+
+    # --- colorbar tick/outline styling ---
+    cbar = axis.collections[0].colorbar
+    cbar.ax.tick_params(colors=LIGHT_GRAY, labelsize=18)
+    cbar.outline.set_edgecolor(LIGHT_GRAY)
 
     # 3) Axis styling
     axis.xaxis.tick_top()
     axis.xaxis.set_label_position("top")
 
-    plt.setp(axis.get_xticklabels(), rotation=45, fontsize=20, color="dimgray")
-    plt.setp(axis.get_yticklabels(), rotation=45, fontsize=20, color="dimgray")
+    plt.setp(axis.get_xticklabels(), rotation=45, fontsize=20, color=LIGHT_GRAY)
+    plt.setp(axis.get_yticklabels(), rotation=45, fontsize=20, color=LIGHT_GRAY)
 
-    axis.set_xlabel("Trained on", fontsize=24, color="gray", labelpad=20)
-    axis.set_ylabel("Tested on", fontsize=24, color="gray", labelpad=20)
-    axis.tick_params(axis="both", which="both", length=0)
+    axis.set_xlabel("Trained on", fontsize=24, color=LIGHT_GRAY, labelpad=20)
+    axis.set_ylabel("Tested on", fontsize=24, color=LIGHT_GRAY, labelpad=20)
+    axis.tick_params(axis="both", which="both", length=0, colors=LIGHT_GRAY)
+
+    # --- hide axes frame/spines ---
+    for spine in axis.spines.values():
+        spine.set_visible(False)
 
     plt.tight_layout()
 
     # 4) Save or show
     if save_path:
-        plt.savefig(save_path, format="pdf", bbox_inches="tight", pad_inches=0.1)
+        plt.savefig(
+            save_path,
+            format="pdf",
+            bbox_inches="tight",
+            pad_inches=0.1,
+            transparent=True,
+            facecolor="none",
+            edgecolor="none",
+        )
         print(f"Cross-device confusion heatmap saved to '{save_path}'.")
         plt.close()
     else:

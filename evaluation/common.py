@@ -98,6 +98,8 @@ vice_cmap = LinearSegmentedColormap.from_list(
 # Whatever this is :)
 fmlp_cmap_2 = LinearSegmentedColormap.from_list("custom_cmap", ["#009999", "#CDA2BE"])
 
+LIGHT_GRAY = "#c9c9c9"
+
 
 def subcarrier_barplot(df: pl.DataFrame, y: str, ylabel: str, file: Path):
     """
@@ -112,43 +114,64 @@ def subcarrier_barplot(df: pl.DataFrame, y: str, ylabel: str, file: Path):
     unique_receivers = [rcv for rcv in RECEIVER_ORDER if rcv in unique_receivers]
 
     # Create the plot
-    plt.figure(figsize=(14, 6))
+    plt.figure(figsize=(14, 6), facecolor=(0, 0, 0, 0))
+    ax = plt.gca()
+    ax.set_facecolor((0, 0, 0, 0))
 
+    n_hue = df.select("modified_idx").n_unique()
+    white_palette = ["#ffffff"] * int(n_hue)
     # Use Seaborn to create a grouped barplot
     sns.barplot(
         data=df,
         x="receiver_name",
         y=y,
         hue="modified_idx",
-        palette=palette,  # type: ignore
+        palette=white_palette,  # type: ignore
         dodge=True,
         saturation=0.95,
         order=unique_receivers,
         zorder=3,
+        edgecolor="none",
+        linewidth=0,
     )
+    leg = ax.get_legend()
+    if leg is not None:
+        leg.remove()
 
-    plt.ylabel(ylabel=ylabel, fontsize=26)
-    plt.xlabel("Receiver Name", fontsize=26)
-    plt.legend(
-        title="Subcarrier",
-        title_fontsize=24,
-        fontsize=22,
-        bbox_to_anchor=(1.01, 1),
-        loc="upper left",
-        frameon=True,
-    )
-    plt.xticks(fontsize=24)
-    plt.yticks(fontsize=24)
+    for p in ax.patches:
+        p.set_antialiased(False)
+
+    plt.ylabel(ylabel=ylabel, fontsize=26, color=LIGHT_GRAY)
+    plt.xlabel("Receiver Name", fontsize=26, color=LIGHT_GRAY)
+
+    ax.tick_params(axis="both", colors=LIGHT_GRAY, labelsize=24)
+    for spine in ax.spines.values():
+        spine.set_color(LIGHT_GRAY)
+
+    # leg = plt.legend(
+    #     title="Subcarrier",
+    #     title_fontsize=24,
+    #     fontsize=22,
+    #     bbox_to_anchor=(1.01, 1),
+    #     loc="upper left",
+    #     frameon=False,  # cleaner on transparent bg
+    # )
+    # plt.setp(leg.get_texts(), color=LIGHT_GRAY)
+    # plt.setp(leg.get_title(), color=LIGHT_GRAY)
     plt.tight_layout()
     plt.savefig(
         file,
         format="pdf",
         bbox_inches="tight",
         dpi=300,
+        transparent=True,
+        facecolor="none",
+        edgecolor="none",
     )
 
     if SHOW_PLT:
         plt.show()
+    plt.close()
 
 
 def subcarrier_dual_barplot(

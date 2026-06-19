@@ -47,7 +47,7 @@ from matplotlib.colors import Normalize
 from sensession.campaign.processor import CampaignProcessor
 
 # Required by kaleido when exporting plotly figures
-pio.kaleido.scope.mathjax = None
+pio.defaults.mathjax = None
 
 
 # ---------------------------------------------------------------------------
