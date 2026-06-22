@@ -4,6 +4,7 @@ since we generally use the same devices etc. across them
 """
 
 import time
+from typing import Any
 
 # pylint: disable=duplicate-code
 from pathlib import Path
@@ -133,7 +134,7 @@ def get_ax210() -> PSNICConfig:
         name="Intel ax210",
         short_name="ax210",
         interface="wlp2s0",
-        mac_address="b0:dc:ef:b4:cb:6b",
+        mac_address=MacAddr("b0:dc:ef:b4:cb:6b"),
         antenna_idxs=[0],
         stream_idxs=[0],
         phy_path=2,
@@ -148,7 +149,7 @@ def get_qca1() -> Ath9kNICConfig:
         name="Qualcomm Atheros AR9462",
         short_name="qca",
         interface="wlp3s0",
-        mac_address="70:77:81:69:51:bf",
+        mac_address=MacAddr("70:77:81:69:51:bf"),
         antenna_idxs=[0],
         stream_idxs=[0],
         repo_path="~/Development/csi-modules",
@@ -244,11 +245,11 @@ def generate_frame(frame: InterleavedIQFrameGroupConfig):
     # ensure frame is generated
     manager = FrameGenerator()
     digest = manager.add_frame(frame)
-    frame = manager.retrieve_frame(digest)
+    manager.retrieve_frame(digest)
 
 
 if __name__ == "__main__":
-    receiver = [
+    receiver: list[Any] = [
         get_qca1(),
         get_asus_1(),
         get_asus_2(),

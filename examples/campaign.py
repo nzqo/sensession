@@ -176,7 +176,7 @@ def build_campaign() -> Campaign:
         frame_group,
     )
     experiment_schedule = get_basic_exp_schedule(
-        builder, router.device_id(), usrp.device_id(), frame_group.frame_id()
+        builder, router.device_id(), usrp.device_id(), frame_group
     )
 
     print(f"Warmup schedule: \n{warmup_schedule.to_json()}")

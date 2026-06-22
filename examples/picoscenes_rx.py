@@ -18,7 +18,7 @@ The target is Channel 1 (center frequency 2412 MHz and bandwidth of 20 MHz).
 import time
 from pathlib import Path
 
-from sensession import Channel, Database, Bandwidth
+from sensession import Channel, MacAddr, Database, Bandwidth
 from sensession.tools import PicoScenes
 from sensession.devices import PSNIC, PSUSRP, PSNICConfig, PSUSRPConfig
 
@@ -33,7 +33,7 @@ def run():
         name="Intel ax200",
         short_name="ax200",
         interface="wlp11s0",
-        mac_address="e4:0d:36:1f:19:f9",
+        mac_address=MacAddr("e4:0d:36:1f:19:f9"),
         antenna_idxs=[0],
         stream_idxs=[0],
         phy_path=4,
@@ -86,7 +86,7 @@ def run():
 
     with Database("data/picoscenes_test", append=False) as db:
         for r in result:
-            print(f"Receiver {r.meta.receiver_name} captured: {len(r.data.csi_vals)}")
+            print(f"Receiver {r.meta.receiver_name} captured: {len(r.csi)}")
             db.add_data(r)
 
 
