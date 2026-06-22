@@ -65,7 +65,15 @@ if __name__ == "__main__":
     # Setup device for tx
     esp_transmitter.connect_device()
     esp_transmitter.change_channel(channel.number)
-    tx_config = BaseTransmissionConfig(n_reps=1000, pause_ms=10)
+    tx_config = BaseTransmissionConfig(
+        n_reps=1000,
+        pause_ms=10,
+        start_at=None,  # Change to an epoch timestamp in seconds to start a specific time
+    )
+
+    # Re-sync clocks immediately before starting to minimize drift between setup and run.
+    # This is technically only important when using start_at; so just showcasing.
+    esp_transmitter.sync_esp_clock()
 
     # Start capture
     logger.debug("Starting capture with ESP32 device(s)")

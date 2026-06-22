@@ -214,7 +214,7 @@ def main():
         sys.exit(0)
 
     if args.dry_run:
-        logger.info("Dry run — would convert:")
+        logger.info("Dry run... would convert:")
         for r in to_convert:
             logger.info(f"  {r}")
             meta_df = pl.read_parquet(

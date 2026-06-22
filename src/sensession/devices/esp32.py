@@ -414,14 +414,16 @@ class ESP32:
             raise RuntimeError("Tried to transmit with non-TX device")
         if not frame.transmitter_address or not frame.receiver_address:
             raise RuntimeError("Frame to transmit did not contain tx/rx MAC")
-        args = bytearray(20)
+        args = bytearray(28)
         mac_src = bytes.fromhex(frame.transmitter_address.strip())
         mac_dst = bytes.fromhex(frame.receiver_address.strip())
         args[:6] = mac_dst
         args[6:12] = mac_src
-        # pack n_reps and pause_ms into 8 bytes ("i" = 4 byte int)
-        packed_ints = struct.pack("ii", txconf.n_reps, txconf.pause_ms)
-        args[12:20] = packed_ints
+        args[12:20] = struct.pack("ii", txconf.n_reps, txconf.pause_ms)
+        start_at_us = (
+            int(txconf.start_at * 1_000_000) if txconf.start_at is not None else 0
+        )
+        args[20:28] = struct.pack("Q", start_at_us)
         self._send_command(self.ESPCommand.TRANSMIT_CUSTOM_WIFI_FRAME, args)
 
     ### private members

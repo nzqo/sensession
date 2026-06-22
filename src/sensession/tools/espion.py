@@ -9,12 +9,13 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from sensession.config import Channel
+from sensession.config import Channel, FrameId, BaseTransmissionConfig
 from sensession.tools.tool import (
     CsiMeta,
     DeviceId,
     CsiReceiver,
     CaptureResult,
+    CsiTransmitter,
     BaseFrameConfig,
 )
 from sensession.devices.esp32 import ESP32
@@ -35,7 +36,7 @@ class CapturedDataFile:
     file: TempFile  # File in which data was captured
 
 
-class ESP32Tool(CsiReceiver):
+class ESP32Tool(CsiReceiver, CsiTransmitter):
     """
     ESP32 Tool Class.
     """
@@ -51,6 +52,18 @@ class ESP32Tool(CsiReceiver):
 
         self.tmp_channel: Channel | None = None
         self.tmp_capture_devices: dict = {}
+
+        # TX state: maps device_id -> (device, frame, tx_config)
+        self.frames: dict[FrameId, BaseFrameConfig] = {}
+        self.tx_devices: dict[
+            DeviceId, tuple[ESP32, BaseFrameConfig, BaseTransmissionConfig]
+        ] = {}
+
+    def register_frames(self, frames: list[BaseFrameConfig]):
+        """
+        Register frame configs so they can be referenced by ID in setup_transmit.
+        """
+        self.frames.update({frame.frame_id(): frame for frame in frames})
 
     def _device_setup(self, device: ESP32):
         """
@@ -108,20 +121,39 @@ class ESP32Tool(CsiReceiver):
                 f"ESP32 device {receiver_name} ready, tmp file {tmp_file.path}"
             )
 
+    def setup_transmit(
+        self,
+        device_id: DeviceId,
+        frame_id: FrameId,
+        channel: Channel,
+        tx_config: BaseTransmissionConfig,
+    ):
+        device = self.devices[device_id]
+        frame = self.frames[frame_id]
+        device.connect_device()
+        device.change_channel(channel.number)
+        self.tx_devices[device_id] = (device, frame, tx_config)
+
     def _run(self):
-        """
-        Start capturing
-        """
+        # RX path
         for device in self.tmp_capture_devices.values():
             device.start_receiving_csi()
 
+        # TX path: resync clocks immediately before transmitting to minimize drift
+        for device, frame, tx_config in self.tx_devices.values():
+            device.sync_esp_clock()
+            device.transmit_frame_with_tx_config(frame, tx_config)
+
     def _stop(self):
-        """
-        Stop Capturing
-        """
+        # RX path
         for device in self.tmp_capture_devices.values():
             device.stop_receiving_csi()
             device.close_serial_connection()
+
+        # TX path
+        for device, _, _ in self.tx_devices.values():
+            device.close_serial_connection()
+        self.tx_devices.clear()
 
     def _reap(self) -> list[CaptureResult]:
         """
