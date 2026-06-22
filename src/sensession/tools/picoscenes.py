@@ -373,8 +373,6 @@ class PicoScenes(CsiReceiver, CsiTransmitter):
                 capture.file.close()
                 continue
 
-            capture_res = CaptureResult(receiver_id=capture.receiver_id)
-
             # Try to load data and unpack into the capture result if present
             res = load_picoscenes_data(
                 capture.file.path, capture.antenna_idxs, capture.stream_idxs
@@ -385,6 +383,7 @@ class PicoScenes(CsiReceiver, CsiTransmitter):
                 continue
 
             csi, subcarrier_idxs = res
+            # Create metadata
             meta = self._get_device_meta(
                 antenna_idxs=capture.antenna_idxs,
                 stream_idxs=capture.stream_idxs,
@@ -392,10 +391,9 @@ class PicoScenes(CsiReceiver, CsiTransmitter):
                 receiver_name=capture.receiver_name,
             )
 
-            capture_res.csi = csi
-            capture_res.meta = meta
-
-            captures.append(capture_res)
+            captures.append(
+                CaptureResult(receiver_id=capture.receiver_id, meta=meta, csi=csi)
+            )
 
         return captures
 

@@ -7,13 +7,13 @@ Recursively searches a root directory for folders that contain both
 * Reads every (receiver, meta_id) group from ``csi.parquet``
 * Reconstructs complex CSI as ``csi_abs * exp(1j * csi_phase)``
 * Writes one ``.npz`` file per group under ``<recording>/csi/``
-* Leaves ``meta.parquet`` untouched (same format for both backends)
-* Optionally removes ``csi.parquet`` afterwards (``--delete``)
+* Patches ``meta.parquet`` with a ``relative_csi_path`` column pointing to each ``.npz``
+* Removes ``csi.parquet`` afterwards; use ``--backup`` to keep it as ``csi.parquet.bak``
 
 Usage
 -----
     python scripts/parquet_to_numpy.py /path/to/data
-    python scripts/parquet_to_numpy.py /path/to/data --delete
+    python scripts/parquet_to_numpy.py /path/to/data --backup
     python scripts/parquet_to_numpy.py /path/to/data --dry-run
 """
 
@@ -91,25 +91,29 @@ def _write_group(
     logger.debug(f"  wrote csi/{fname}  shape={csi.shape}")
 
 
-def _convert_recording(recording: Path, *, delete_parquet: bool) -> int:
+def _convert_recording(recording: Path, *, backup: bool) -> int:
     """
     Convert a single parquet-backed recording to the NPY format.
 
+    Deletes ``csi.parquet`` after conversion unless ``backup`` is True,
+    in which case it is renamed to ``csi.parquet.bak``.
+
     Args:
-        recording      : Recording directory containing csi.parquet and meta.parquet.
-        delete_parquet : When True, remove ``csi.parquet`` after a successful conversion.
+        recording : Recording directory containing csi.parquet and meta.parquet.
+        backup    : Rename instead of delete ``csi.parquet`` after conversion.
 
     Returns:
         Number of (receiver, meta_id) groups written.
     """
     csi_parquet = recording / "csi.parquet"
+    meta_parquet = recording / "meta.parquet"
     csi_dir = recording / "csi"
 
     logger.info(f"Converting: {recording}")
     csi_dir.mkdir(exist_ok=True)
 
     csi_df = pl.read_parquet(csi_parquet)
-    meta_df = pl.read_parquet(recording / "meta.parquet")
+    meta_df = pl.read_parquet(meta_parquet)
 
     # Build a fast meta_id → receiver_name lookup
     receiver_map: dict[str, str] = dict(
@@ -119,14 +123,27 @@ def _convert_recording(recording: Path, *, delete_parquet: bool) -> int:
     groups_written = 0
     for (meta_id,), group_df in csi_df.group_by("meta_id", maintain_order=True):
         meta_id_str = str(meta_id)
-        _write_group(
-            group_df, meta_id_str, receiver_map.get(meta_id_str, "unknown"), csi_dir
-        )
+        receiver_name = receiver_map.get(meta_id_str, "unknown")
+        _write_group(group_df, meta_id_str, receiver_name, csi_dir)
         groups_written += 1
 
-    if delete_parquet:
+    # Patch relative_csi_path into meta.parquet
+    meta_df = meta_df.with_columns(
+        relative_csi_path=pl.Series(
+            [
+                f"csi/{receiver_map.get(str(mid), 'unknown')}_{mid}.npz"
+                for mid in meta_df.get_column("meta_id")
+            ]
+        )
+    )
+    meta_df.write_parquet(meta_parquet)
+
+    if backup:
+        csi_parquet.rename(csi_parquet.with_suffix(".parquet.bak"))
+        logger.info(f"  backed up → csi.parquet.bak")
+    else:
         csi_parquet.unlink()
-        logger.info(f"  removed {csi_parquet.name}")
+        logger.info(f"  removed csi.parquet")
 
     return groups_written
 
@@ -149,10 +166,10 @@ def main():
         help="Root directory to search for parquet recordings.",
     )
     parser.add_argument(
-        "--delete",
+        "--backup",
         action="store_true",
         default=False,
-        help="Remove csi.parquet after successful conversion.",
+        help="Rename csi.parquet to csi.parquet.bak instead of deleting it.",
     )
     parser.add_argument(
         "--dry-run",
@@ -200,6 +217,11 @@ def main():
         logger.info("Dry run — would convert:")
         for r in to_convert:
             logger.info(f"  {r}")
+            meta_df = pl.read_parquet(
+                r / "meta.parquet", columns=["meta_id", "receiver_name"]
+            )
+            for meta_id, receiver_name in meta_df.iter_rows():
+                logger.info(f"    csi/{receiver_name}_{meta_id}.npz")
         sys.exit(0)
 
     total_groups = 0
@@ -207,7 +229,7 @@ def main():
 
     for recording in to_convert:
         try:
-            n = _convert_recording(recording, delete_parquet=args.delete)
+            n = _convert_recording(recording, backup=args.backup)
             total_groups += n
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error(f"Failed to convert {recording}: {exc}")

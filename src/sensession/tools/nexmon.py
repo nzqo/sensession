@@ -188,8 +188,6 @@ class Nexmon(CsiReceiver):
                 tmp_file.close()
                 continue
 
-            capture_res = CaptureResult(receiver_id=capture.receiver_id)
-
             # Try to load data and unpack into the capture result if present
             res = load_nexmon_data(
                 tmp_file.path,
@@ -213,11 +211,9 @@ class Nexmon(CsiReceiver):
                 receiver_name=receiver_name,
             )
 
-            # Save data and metadata
-            capture_res.csi = csi
-            capture_res.meta = meta
-
-            captures.append(capture_res)
+            captures.append(
+                CaptureResult(receiver_id=capture.receiver_id, meta=meta, csi=csi)
+            )
 
             logger.debug(
                 f"Loaded nexmon data for {receiver_name} ({receiver_id}). "

@@ -384,9 +384,6 @@ class Database:
             logger.debug("No data to add. Ignoring ...")
             return
 
-        assert data.csi, "Valid data must contain CSI"
-        assert data.meta, "Valid data must have metainfo"
-
         # Put CSI into dataframe
         csi_df = csigroup_to_dataframe(
             group=data.csi,
@@ -665,9 +662,6 @@ class NpyDatabase:
             logger.debug("No data to add. Ignoring ...")
             return
 
-        assert data.csi, "Valid data must contain CSI"
-        assert data.meta, "Valid data must have metainfo"
-
         receiver_name = data.meta.receiver_name
         key = (receiver_name, meta_id)
 
@@ -676,6 +670,9 @@ class NpyDatabase:
 
         # Build and accumulate a metadata row
         meta_df = meta_to_dataframe(data.meta, meta_id=meta_id, lazy=False)  # type: ignore[arg-type]
+        meta_df = meta_df.with_columns(
+            relative_csi_path=pl.lit(f"csi/{receiver_name}_{meta_id}.npz")
+        )
         if extra_meta:
             meta_df = meta_df.with_columns(
                 **{

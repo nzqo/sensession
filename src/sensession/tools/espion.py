@@ -142,8 +142,6 @@ class ESP32Tool(CsiReceiver):
                 tmp_file.close()
                 continue
 
-            capture_res = CaptureResult(receiver_id=capture.receiver_id)
-
             subcarrier_idxs = device.get_csi_subcarrier_idxs()
             subcarrier_mask = device.get_subcarrier_mask()
 
@@ -163,11 +161,9 @@ class ESP32Tool(CsiReceiver):
                 receiver_name=receiver_name,
             )
 
-            # Save data and metadata
-            capture_res.csi = csi
-            capture_res.meta = meta
-
-            captures.append(capture_res)
+            captures.append(
+                CaptureResult(receiver_id=capture.receiver_id, meta=meta, csi=csi)
+            )
 
             logger.debug(
                 f"Loaded ESP32 CSI data for {receiver_name} ({receiver_id}). "
