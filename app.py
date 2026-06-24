@@ -65,10 +65,11 @@ def rerun_failed(file: Annotated[Path, typer.Argument()], num_tries: int = 1):
 
     # Run all campaigns stored
     for campaign in campaigns:
-        camp = campaign
+        camp: Campaign | None = campaign
 
         # Try for num_tries
         for _ in range(num_tries):
+            assert camp is not None  # guaranteed: loop breaks when try_campaign returns None
             # If there are no remaining unsuccessful schedules, this campaign is done!
             if (camp := try_campaign(camp)) is None:
                 break

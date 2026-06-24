@@ -30,7 +30,7 @@ class UsrpulseConfig:
     """
 
     name     : str           # A name for readable reference
-    addr     : IPv4Address   # Address where usrpulse is running
+    addr     : IPv4Address | str   # Address where usrpulse is running
     port     : int           # Port under which to access daemon
     ssh_name : str        # Name for passwordless ssh access
 

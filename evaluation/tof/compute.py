@@ -30,7 +30,7 @@ from evaluation.tof.tof import ToFStats, TOFConfig, TOFProcessor
 from sensession.campaign.processor import CampaignProcessor
 
 # Required by kaleido when exporting plotly figures
-pio.kaleido.scope.mathjax = None
+pio.defaults.mathjax = None
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +467,7 @@ def plot_all_pdp_waterfall_lines(
         ax_width = subplot_width - 2 * gap_x
         ax_height = subplot_height - 2 * gap_y
 
-        ax = fig.add_axes([ax_left, ax_bottom, ax_width, ax_height], projection="3d")
+        ax = fig.add_axes([ax_left, ax_bottom, ax_width, ax_height], projection="3d")  # type: ignore[call-overload]
         plot_pdp_waterfall_on_ax_lines(ax, config.delays, config.times, config.pdp)
 
         ax.text(
@@ -503,7 +503,7 @@ def plot_single_pdp_waterfall_lines(
     top_margin = 0.99
 
     fig = plt.figure(figsize=(6, 4))
-    ax = fig.add_axes(
+    ax = fig.add_axes(  # type: ignore[call-overload]
         [
             left_margin,
             bottom_margin,
@@ -610,8 +610,8 @@ def plot_all_ground_truth_top(
     offset = 0.03 * ylim_top
 
     for patch, rx_label in zip(ax_bar.patches, dev_df["rx"]):
-        height = patch.get_height()
-        x = patch.get_x() + patch.get_width() / 2.0
+        height = patch.get_height()  # type: ignore[attr-defined]
+        x = patch.get_x() + patch.get_width() / 2.0  # type: ignore[attr-defined]
         y = height + offset
         ax_bar.text(
             x,

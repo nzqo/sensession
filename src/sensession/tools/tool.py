@@ -68,9 +68,9 @@ class CaptureResult:
     Struct to bundle result of a CSI capture. A capture refers to running a tool
     for some amount of time and amassing the collected data.
     """
-    receiver_id     : DeviceId                 # Unique ID of the receiver
-    csi             : CsiGroup | None = None   # The captured data. May be None if nothing was captured.
-    meta            : CsiMeta  | None = None   # Metadata relevant to the capture
+    receiver_id     : DeviceId   # Unique ID of the receiver
+    meta            : CsiMeta    # Metadata relevant to the capture
+    csi             : CsiGroup   # The captured data
 # fmt: on
 
 

@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 """
 Example of running a manual sensing session.
 
@@ -11,7 +12,7 @@ from datetime import timedelta
 from ipaddress import IPv4Address
 
 import polars as pl
-import sensei
+import sensei  # pylint: disable=import-error
 from loguru import logger
 
 from sensession import Channel, MacAddr, Database, Bandwidth, FrameGenerator

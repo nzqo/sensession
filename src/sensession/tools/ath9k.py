@@ -80,7 +80,7 @@ class Ath9k(CsiReceiver):
         """
         logger.trace(f"Removing ath9k device {device_id}")
 
-    def _setup_capture(
+    def _setup_capture(  # pylint: disable=too-many-locals
         self,
         devices: list[DeviceId],
         channel: Channel,
@@ -210,8 +210,6 @@ class Ath9k(CsiReceiver):
             tmp_file.close()
             return []
 
-        capture_res = CaptureResult(receiver_id=device_id)
-
         res = load_ath9k_data(
             tmp_file.path, device.config.antenna_idxs, device.config.stream_idxs
         )
@@ -225,7 +223,7 @@ class Ath9k(CsiReceiver):
         # Unpack parsing result
         csi, subcarrier_idxs = res
 
-        # Extract a corresponding Meta struct
+        # Create metadata
         meta = self._get_device_meta(
             antenna_idxs=device.config.antenna_idxs,
             stream_idxs=device.config.stream_idxs,
@@ -233,7 +231,4 @@ class Ath9k(CsiReceiver):
             receiver_name=device.config.short_name,
         )
 
-        capture_res.csi = csi
-        capture_res.meta = meta
-
-        return [capture_res]
+        return [CaptureResult(receiver_id=device_id, meta=meta, csi=csi)]

@@ -143,7 +143,7 @@ def read_nexmon_csi(  # pylint: disable=too-many-locals
 # Theoretically, we could probably write the pool used in the frame generation so
 # that it would allow for a reuse here.
 # For now, doing at least some caching of such an instance is already good enough.
-engine_singleton: EngineWrapper | None = None
+engine_singleton: EngineWrapper | None = None  # pylint: disable=invalid-name
 
 
 def lazy_init_singleton():

@@ -3,6 +3,7 @@ To avoid code duplication, some parts can be shared between experiments,
 since we generally use the same devices etc. across them
 """
 
+from typing import Any
 from pathlib import Path
 from datetime import timedelta
 
@@ -278,7 +279,7 @@ class ExperimentFixture:
     ):
         self.num_retries = 10
         self.campaign_name = campaign_name
-        self.receiver = [
+        self.receiver: list[Any] = [
             get_qca1(),
             get_asus_1(),
             get_asus_2(),
@@ -483,7 +484,7 @@ class ExperimentFixture80MHz:
     ):
         self.num_retries = 10
         self.campaign_name = campaign_name
-        self.receiver = [
+        self.receiver: list[Any] = [
             get_asus_1(),
             get_asus_2(),
             get_ax210(),
@@ -510,7 +511,7 @@ class ExperimentFixture80MHz:
         )
 
         self.schedules: list[Schedule] = []
-        self.frames = []
+        self.frames: list = []
 
         self.gain = gain
         self.if_delay = if_delay

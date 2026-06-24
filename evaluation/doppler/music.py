@@ -47,7 +47,7 @@ from matplotlib.colors import Normalize
 from sensession.campaign.processor import CampaignProcessor
 
 # Required by kaleido when exporting plotly figures
-pio.kaleido.scope.mathjax = None
+pio.defaults.mathjax = None
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +482,6 @@ def plot_speed_pointrange_compact(
         color="#636363",
     )
 
-    # Color palette — assumes these constants are defined somewhere
-    # or replace with literal hex strings if you prefer.
     palette = [
         LIGHT_GRAY,
         LIGHT_TEAL,
@@ -999,7 +997,7 @@ def load_cached_results(path: Path):
 
     def build(phase: str):
         df_sub = df.filter(pl.col("phase") == phase)
-        nested = {}
+        nested: dict = {}
         for pipeline, g1 in df_sub.group_by("pipeline"):
             pipeline_name = pipeline[0]
             nested[pipeline_name] = {}
@@ -1084,7 +1082,7 @@ def main():
     # ------------------------------------------------------
     if args.command == "plot_distributions":
         if not estimates_path.exists():
-            raise FileNotFoundError("Run `calculate` first — no cached parquet found.")
+            raise FileNotFoundError("Run `calculate` first; no cached parquet found.")
 
         baseline_methods, _ = load_cached_results(estimates_path)
 
@@ -1105,7 +1103,7 @@ def main():
     # ------------------------------------------------------
     if args.command == "plot_estimates":
         if not estimates_path.exists():
-            raise FileNotFoundError("Run `calculate` first — no cached parquet found.")
+            raise FileNotFoundError("Run `calculate` first; no cached parquet found.")
 
         _, baseline_methods = load_cached_results(estimates_path)
 

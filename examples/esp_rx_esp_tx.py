@@ -25,7 +25,7 @@ if __name__ == "__main__":
         name="ESP1", short_name="ESP1", comport="/dev/cu.usbmodem21201"
     )
     # example on macos (UART)
-    espTX_cfg = ESP32Config(
+    esp_tx_cfg = ESP32Config(
         name="ESPTX",
         short_name="ESP2",
         comport="/dev/tty.usbserial-0001",
@@ -42,11 +42,11 @@ if __name__ == "__main__":
 
     # Create devices
     esp1 = ESP32(esp1_cfg)
-    espTX = ESP32(espTX_cfg)
+    esp_transmitter = ESP32(esp_tx_cfg)
 
     esp_tool = ESP32Tool()
     esp1_id = esp_tool.add_device(esp1)
-    espTX_id = esp_tool.add_device(espTX)
+    esp_tx_id = esp_tool.add_device(esp_transmitter)
 
     # note: everything but the rx and tx addresses is ignored.
     frame = BaseFrameConfig(
@@ -63,9 +63,17 @@ if __name__ == "__main__":
     )
 
     # Setup device for tx
-    espTX.connect_device()
-    espTX.change_channel(channel.number)
-    tx_config = BaseTransmissionConfig(n_reps=1000, pause_ms=10)
+    esp_transmitter.connect_device()
+    esp_transmitter.change_channel(channel.number)
+    tx_config = BaseTransmissionConfig(
+        n_reps=1000,
+        pause_ms=10,
+        start_at=None,  # Change to an epoch timestamp in seconds to start a specific time
+    )
+
+    # Re-sync clocks immediately before starting to minimize drift between setup and run.
+    # This is technically only important when using start_at; so just showcasing.
+    esp_transmitter.sync_esp_clock()
 
     # Start capture
     logger.debug("Starting capture with ESP32 device(s)")
@@ -74,7 +82,7 @@ if __name__ == "__main__":
 
     # Start transmission
     logger.debug("Starting to transmit n times on ESP32 device")
-    espTX.transmit_frame_with_tx_config(frame, tx_config)
+    esp_transmitter.transmit_frame_with_tx_config(frame, tx_config)
 
     logger.debug("Waiting (10s)")
     time.sleep(10)
@@ -84,7 +92,7 @@ if __name__ == "__main__":
     esp_tool.stop()
 
     # Disconnect TX device
-    espTX.close_serial_connection()
+    esp_transmitter.close_serial_connection()
 
     # Collect
     res = esp_tool.reap()

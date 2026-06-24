@@ -36,7 +36,7 @@ def run():
         name="Intel ax200",
         short_name="ax200",
         interface="wlp5s0",
-        mac_address="e4:0d:36:1f:19:f9",
+        mac_address=MacAddr("e4:0d:36:1f:19:f9"),
         antenna_idxs=[0, 1],
         stream_idxs=[0, 1],
         phy_path=3,
@@ -110,7 +110,7 @@ def run():
 
     with Database("data/picoscenes_test", append=False) as db:
         for res in result:
-            print(f"Device {res.meta.receiver_name} captured: {len(res.data.csi_vals)}")
+            print(f"Device {res.meta.receiver_name} captured: {len(res.csi)}")
             db.add_data(res)
 
 
